@@ -1,6 +1,6 @@
 # v1.1.1 Tool-Action Pressure
 
-**Status:** OPEN (follows promoted [TagWorld-lite](../tagworld_lite/README.md))
+**Status:** PROMOTED (`v1.1.1`) — see [experiments/v1.1.1_tagworld_tool_action_promote](../../experiments/v1.1.1_tagworld_tool_action_promote/README.md)
 
 ## Goal
 

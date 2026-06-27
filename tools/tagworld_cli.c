@@ -20,6 +20,7 @@ static void print_usage(const char *prog) {
     printf("  --max-ticks N       (default 64)\n");
     printf("  --trace-every N     (default 1000)\n");
     printf("  --mode MODE         observer|prediction|action (default observer)\n");
+    printf("  --map MAP           corridor|tool (default corridor)\n");
     printf("  --fast              no rendering, summary only\n");
     printf("  --viz               enable terminal ASCII visualizer\n");
     printf("  --baseline          track random action baseline (action mode)\n");
@@ -40,6 +41,18 @@ static int parse_mode(const char *s, TagWorldMode *mode) {
     }
     if (strcmp(s, "action") == 0) {
         *mode = TAGWORLD_MODE_ACTION;
+        return 0;
+    }
+    return -1;
+}
+
+static int parse_map(const char *s, TagWorldMapId *map_id) {
+    if (strcmp(s, "corridor") == 0) {
+        *map_id = TAGWORLD_MAP_CORRIDOR;
+        return 0;
+    }
+    if (strcmp(s, "tool") == 0 || strcmp(s, "tool_pressure") == 0) {
+        *map_id = TAGWORLD_MAP_TOOL_PRESSURE;
         return 0;
     }
     return -1;
@@ -70,6 +83,11 @@ int main(int argc, char **argv) {
         } else if (strcmp(argv[i], "--mode") == 0 && i + 1 < argc) {
             if (parse_mode(argv[++i], &cfg.mode) != 0) {
                 fprintf(stderr, "Unknown mode\n");
+                return 1;
+            }
+        } else if (strcmp(argv[i], "--map") == 0 && i + 1 < argc) {
+            if (parse_map(argv[++i], &cfg.map_id) != 0) {
+                fprintf(stderr, "Unknown map\n");
                 return 1;
             }
         } else if (strcmp(argv[i], "--fast") == 0) {

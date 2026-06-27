@@ -19,6 +19,11 @@
 #define TAG_REL_OUTCOME (NERVA_REL_CUSTOM_BASE + 4u)
 #define TAG_REL_CONTRADICTS (NERVA_REL_CUSTOM_BASE + 5u)
 
+typedef enum TagWorldMapId {
+    TAGWORLD_MAP_CORRIDOR = 0,
+    TAGWORLD_MAP_TOOL_PRESSURE = 1
+} TagWorldMapId;
+
 typedef enum TagWorldCell {
     TAG_CELL_EMPTY = 0,
     TAG_CELL_WALL,
@@ -67,6 +72,7 @@ typedef struct TagWorld {
     bool done;
     TagWorldOutcome outcome;
     uint32_t episode_variant;
+    TagWorldMapId map_id;
 } TagWorld;
 
 typedef struct TagWorldEventIds {
@@ -103,6 +109,7 @@ typedef struct TagWorldEdgeIds {
     uint32_t push_doorway_to_block_at_doorway;
     uint32_t path_blocked_to_run_safe;
     uint32_t path_open_to_wait;
+    uint32_t path_open_to_push_doorway;
 } TagWorldEdgeIds;
 
 typedef struct TagWorldNerva {
@@ -130,6 +137,7 @@ typedef struct TagWorldConfig {
     const char *snapshot_out;
     bool run_baseline;
     bool skip_pretrain;
+    TagWorldMapId map_id;
 } TagWorldConfig;
 
 typedef struct TagWorldMetrics {
@@ -184,7 +192,10 @@ typedef struct TagWorldFrame {
 
 void tagworld_config_defaults(TagWorldConfig *cfg);
 void tagworld_init_map(TagWorld *w, int grid);
+void tagworld_init_map_tool_pressure(TagWorld *w, int grid);
 void tagworld_reset(TagWorld *w, uint32_t seed, uint32_t episode);
+void tagworld_reset_for_config(TagWorld *w, const TagWorldConfig *cfg, uint32_t episode);
+const char *tagworld_map_name(TagWorldMapId map_id);
 int tagworld_seeker_can_reach_runner(const TagWorld *w);
 int tagworld_is_block_at_doorway(const TagWorld *w);
 int tagworld_is_doorway_open(const TagWorld *w);
@@ -194,6 +205,9 @@ uint32_t tagworld_valid_action_mask(const TagWorld *w);
 int tagworld_apply_action(TagWorld *w, TagWorldAction action);
 void tagworld_check_outcome(TagWorld *w);
 int tagworld_simulate_until_outcome(TagWorld *w, TagWorldAction runner_action, uint32_t max_ticks);
+typedef TagWorldAction (*TagWorldStepPolicy)(const TagWorld *w, void *ctx);
+int tagworld_simulate_with_policy(TagWorld *w, TagWorldStepPolicy policy, void *ctx, uint32_t max_ticks);
+TagWorldAction tagworld_push_then_run_policy(const TagWorld *w, void *ctx);
 TagWorldAction tagworld_scripted_action(const TagWorld *w);
 TagWorldAction tagworld_random_action(const TagWorld *w, uint32_t *rng);
 TagWorldAction tagworld_always_run_action(const TagWorld *w);

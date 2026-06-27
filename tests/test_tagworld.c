@@ -343,6 +343,73 @@ static void test_tagworld_replay_deterministic(void) {
     expect_true(strcmp(f1.grid[0], f2.grid[0]) == 0, "replay grid row deterministic");
 }
 
+static TagWorldConfig tagworld_tool_test_config(void) {
+    TagWorldConfig cfg;
+    tagworld_config_defaults(&cfg);
+    cfg.grid = 7;
+    cfg.max_ticks = 64u;
+    cfg.map_id = TAGWORLD_MAP_TOOL_PRESSURE;
+    return cfg;
+}
+
+static void test_tagworld_run_alone_loses_on_tool_map(void) {
+    TagWorldConfig cfg = tagworld_tool_test_config();
+    TagWorld w;
+    tagworld_reset_for_config(&w, &cfg, 0u);
+    int run_outcome = tagworld_simulate_until_outcome(&w, TAG_ACTION_RUN_TO_SAFE, cfg.max_ticks);
+    expect_true(run_outcome != TAGWORLD_OUTCOME_ESCAPED, "run alone does not escape on tool map");
+
+    tagworld_reset_for_config(&w, &cfg, 0u);
+    int wait_outcome = tagworld_simulate_until_outcome(&w, TAG_ACTION_WAIT, cfg.max_ticks);
+    expect_true(wait_outcome != TAGWORLD_OUTCOME_ESCAPED, "wait does not escape on tool map");
+}
+
+static void test_tagworld_push_doorway_then_run_wins(void) {
+    TagWorldConfig cfg = tagworld_tool_test_config();
+    TagWorld w;
+    tagworld_reset_for_config(&w, &cfg, 0u);
+    int outcome = tagworld_simulate_with_policy(&w, tagworld_push_then_run_policy, NULL, cfg.max_ticks);
+    expect_true(outcome == TAGWORLD_OUTCOME_ESCAPED, "push doorway then run escapes on tool map");
+}
+
+static void test_tagworld_action_selects_push_when_required(void) {
+    TagWorldConfig cfg = tagworld_tool_test_config();
+    cfg.episodes = 1u;
+    cfg.mode = TAGWORLD_MODE_ACTION;
+    cfg.fast = true;
+    cfg.seed = 1u;
+
+    NervaEngine e;
+    expect_true(nerva_engine_init(&e, nerva_config_test()) == 0, "tool action init");
+    TagWorldMetrics metrics;
+    expect_true(tagworld_run(&e, &cfg, &metrics) == 0, "tool action run");
+    expect_true(metrics.action_push_doorway_count > 0u,
+                "action selects push doorway on tool map");
+    nerva_engine_free(&e);
+}
+
+static void test_tagworld_tool_action_beats_random_baseline(void) {
+    static const uint32_t seeds[] = {1u, 5u, 11u};
+    TagWorldConfig cfg = tagworld_tool_test_config();
+    cfg.episodes = 100u;
+    cfg.mode = TAGWORLD_MODE_ACTION;
+    cfg.fast = true;
+
+    for (size_t i = 0; i < sizeof(seeds) / sizeof(seeds[0]); ++i) {
+        cfg.seed = seeds[i];
+        NervaEngine e;
+        expect_true(nerva_engine_init(&e, nerva_config_test()) == 0, "tool action seed init");
+        TagWorldMetrics metrics;
+        expect_true(tagworld_run(&e, &cfg, &metrics) == 0, "tool action seed run");
+        double random_rate = tagworld_baseline_random_escape_rate(&cfg, cfg.episodes);
+        expect_true(metrics.escape_rate >= random_rate + 0.20,
+                    "tool map trained action beats random by >=20pp");
+        expect_true(metrics.action_push_doorway_count > 0u,
+                    "tool map action uses push doorway");
+        nerva_engine_free(&e);
+    }
+}
+
 int test_tagworld_run(void) {
     g_failures = 0;
     test_tagworld_deterministic_reset();
@@ -357,6 +424,10 @@ int test_tagworld_run(void) {
     test_tagworld_open_doorway_runner_gets_caught();
     test_tagworld_block_at_doorway_prevents_catch_or_enables_escape();
     test_tagworld_action_beats_random_baseline();
+    test_tagworld_run_alone_loses_on_tool_map();
+    test_tagworld_push_doorway_then_run_wins();
+    test_tagworld_action_selects_push_when_required();
+    test_tagworld_tool_action_beats_random_baseline();
     test_tagworld_viz_no_state_change();
     test_tagworld_replay_deterministic();
     return g_failures;

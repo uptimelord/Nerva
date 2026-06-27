@@ -1,0 +1,12 @@
+{
+  "map": "tool",
+  "mode": "action",
+  "grid": 7,
+  "max_ticks": 64,
+  "episodes": 100,
+  "seeds": [1, 5, 11],
+  "gate": {
+    "min_escape_margin_over_random": 0.20,
+    "min_action_push_doorway_count": 1
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "experiment": "v1.1.1_tagworld_tool_action_promote",
+  "decision": "promote",
+  "tag": "v1.1.1",
+  "date": "2026-06-28",
+  "tests_passed": 102,
+  "map": "tool_pressure",
+  "policy": "pretrain_learned_frozen_snapshot",
+  "action_100_seed1": {
+    "escape_rate": 1.0,
+    "baseline_escape_rate": 0.59,
+    "margin_pp": 41.0,
+    "action_push_doorway_count": 100,
+    "timeouts": 0
+  },
+  "action_100_seed5": {
+    "escape_rate": 1.0,
+    "baseline_escape_rate": 0.74,
+    "margin_pp": 26.0,
+    "action_push_doorway_count": 100,
+    "timeouts": 0
+  },
+  "action_100_seed11": {
+    "escape_rate": 1.0,
+    "baseline_escape_rate": 0.69,
+    "margin_pp": 31.0,
+    "action_push_doorway_count": 100,
+    "timeouts": 0
+  }
+}

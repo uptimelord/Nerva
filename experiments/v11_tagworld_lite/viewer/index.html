@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TagWorld-lite Viewer</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #1a2332;
+      --panel-border: #2d3a4f;
+      --text: #e7ecf3;
+      --muted: #8b9cb3;
+      --accent: #5b9cff;
+      --accent-dim: #3d6fb8;
+      --success: #3dd68c;
+      --danger: #ff6b6b;
+      --warn: #ffb347;
+      --wall: #3d4f66;
+      --floor: #141c28;
+      --door: #c77820;
+      --safe: #2d8a5e;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1rem 1.5rem;
+      border-bottom: 1px solid var(--panel-border);
+      background: var(--panel);
+    }
+
+    header h1 {
+      font-size: 1.25rem;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+    }
+
+    header h1 span { color: var(--accent); font-weight: 400; }
+
+    .header-actions { display: flex; gap: 0.75rem; align-items: center; }
+
+    button, label.file-btn {
+      background: var(--accent-dim);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      padding: 0.5rem 1rem;
+      font-size: 0.875rem;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    button:hover:not(:disabled), label.file-btn:hover { background: var(--accent); }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+    button.secondary { background: var(--panel-border); }
+    button.secondary:hover:not(:disabled) { background: #3d5068; }
+
+    label.file-btn input { display: none; }
+
+    main {
+      display: grid;
+      grid-template-columns: 1fr 320px;
+      gap: 1rem;
+      padding: 1rem 1.5rem;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    @media (max-width: 900px) {
+      main { grid-template-columns: 1fr; }
+    }
+
+    .board-wrap {
+      background: var(--panel);
+      border: 1px solid var(--panel-border);
+      border-radius: 12px;
+      padding: 1.5rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    #board {
+      display: inline-grid;
+      gap: 3px;
+      padding: 8px;
+      background: #0a0e14;
+      border-radius: 10px;
+      box-shadow: inset 0 0 24px rgba(0,0,0,0.5);
+    }
+
+    .cell {
+      width: 44px;
+      height: 44px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 0.85rem;
+      transition: transform 0.12s ease, box-shadow 0.12s ease;
+      position: relative;
+    }
+
+    .cell.wall { background: var(--wall); }
+    .cell.floor { background: var(--floor); }
+    .cell.door {
+      background: linear-gradient(135deg, #3d2810, var(--door));
+      box-shadow: 0 0 8px rgba(199, 120, 32, 0.35);
+    }
+    .cell.safe {
+      background: linear-gradient(135deg, #1a4d32, var(--safe));
+      box-shadow: 0 0 10px rgba(45, 138, 94, 0.4);
+    }
+
+    .token {
+      position: absolute;
+      inset: 4px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.75rem;
+      font-weight: 800;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.45);
+      z-index: 2;
+      animation: pop 0.15s ease;
+    }
+
+    @keyframes pop {
+      from { transform: scale(0.7); opacity: 0.5; }
+      to { transform: scale(1); opacity: 1; }
+    }
+
+    .token.runner { background: linear-gradient(135deg, #2563eb, #60a5fa); color: white; }
+    .token.seeker { background: linear-gradient(135deg, #dc2626, #f87171); color: white; }
+    .token.block {
+      border-radius: 8px;
+      background: linear-gradient(135deg, #92400e, #d97706);
+      color: white;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem 1.25rem;
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+
+    .legend-item { display: flex; align-items: center; gap: 0.4rem; }
+    .legend-swatch {
+      width: 14px;
+      height: 14px;
+      border-radius: 3px;
+    }
+
+    .sidebar { display: flex; flex-direction: column; gap: 1rem; }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--panel-border);
+      border-radius: 12px;
+      padding: 1rem;
+    }
+
+    .card h2 {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      margin-bottom: 0.75rem;
+    }
+
+    .stat-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 0.35rem 0;
+      font-size: 0.9rem;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+    }
+
+    .stat-row:last-child { border-bottom: none; }
+    .stat-label { color: var(--muted); }
+    .stat-value { font-weight: 500; text-align: right; max-width: 60%; word-break: break-word; }
+
+    .stat-value.action { color: var(--accent); }
+    .stat-value.outcome-escaped { color: var(--success); }
+    .stat-value.outcome-caught { color: var(--danger); }
+    .stat-value.outcome-timeout { color: var(--warn); }
+
+    .event-list { list-style: none; }
+    .event-list li {
+      font-size: 0.82rem;
+      padding: 0.3rem 0.5rem;
+      margin-bottom: 0.25rem;
+      background: rgba(91, 156, 255, 0.1);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 4px 4px 0;
+    }
+    .event-list li.expected {
+      background: rgba(255, 179, 71, 0.1);
+      border-left-color: var(--warn);
+    }
+    .event-list li.empty { background: none; border: none; color: var(--muted); font-style: italic; }
+
+    .controls { display: flex; flex-direction: column; gap: 0.75rem; }
+
+    .transport {
+      display: flex;
+      gap: 0.5rem;
+      justify-content: center;
+    }
+
+    .transport button { flex: 1; padding: 0.6rem; }
+
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--accent);
+    }
+
+    .speed-row {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+
+    select {
+      width: 100%;
+      background: var(--floor);
+      color: var(--text);
+      border: 1px solid var(--panel-border);
+      border-radius: 8px;
+      padding: 0.5rem;
+      font-size: 0.875rem;
+    }
+
+    .drop-zone {
+      border: 2px dashed var(--panel-border);
+      border-radius: 12px;
+      padding: 3rem 2rem;
+      text-align: center;
+      color: var(--muted);
+      margin: 2rem auto;
+      max-width: 480px;
+    }
+
+    .drop-zone.dragover {
+      border-color: var(--accent);
+      background: rgba(91, 156, 255, 0.05);
+      color: var(--text);
+    }
+
+    .drop-zone p { margin-top: 0.5rem; font-size: 0.85rem; }
+
+    .hidden { display: none !important; }
+
+    code {
+      background: rgba(0,0,0,0.3);
+      padding: 0.15rem 0.4rem;
+      border-radius: 4px;
+      font-size: 0.8rem;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>TagWorld-lite <span>replay viewer</span></h1>
+    <div class="header-actions">
+      <label class="file-btn">
+        Load replay (.jsonl)
+        <input type="file" id="file-input" accept=".jsonl,.log,.txt">
+      </label>
+      <button id="btn-demo" class="secondary">Load demo</button>
+    </div>
+  </header>
+
+  <div id="empty-state" class="drop-zone">
+    <strong>No replay loaded</strong>
+    <p>Drop a <code>.jsonl</code> replay here, or click Load replay above.</p>
+    <p style="margin-top:1rem">Generate one:</p>
+    <p><code>.\build\nerva_tagworld.exe --episodes 3 --mode action --seed 1 --write-replay demo.jsonl --fast</code></p>
+    <p>Or run <code>.\scripts\watch_tagworld.ps1</code></p>
+  </div>
+
+  <main id="viewer" class="hidden">
+    <section class="board-wrap">
+      <div id="board"></div>
+      <div class="legend">
+        <div class="legend-item"><div class="legend-swatch" style="background:var(--wall)"></div> Wall</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:var(--door)"></div> Doorway</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:var(--safe)"></div> Safe zone</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:#60a5fa;border-radius:50%"></div> Runner</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:#f87171;border-radius:50%"></div> Seeker</div>
+        <div class="legend-item"><div class="legend-swatch" style="background:#d97706"></div> Block</div>
+      </div>
+    </section>
+
+    <aside class="sidebar">
+      <div class="card controls">
+        <h2>Playback</h2>
+        <select id="episode-select"></select>
+        <div class="transport">
+          <button id="btn-prev" title="Previous frame (←)">◀</button>
+          <button id="btn-play" title="Play/Pause (Space)">▶</button>
+          <button id="btn-next" title="Next frame (→)">▶</button>
+        </div>
+        <input type="range" id="scrubber" min="0" max="0" value="0">
+        <div class="stat-row">
+          <span class="stat-label">Frame</span>
+          <span class="stat-value" id="frame-label">0 / 0</span>
+        </div>
+        <div class="speed-row">
+          <label for="speed">Speed</label>
+          <input type="range" id="speed" min="1" max="8" value="3">
+          <span id="speed-label">1×</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Episode state</h2>
+        <div class="stat-row"><span class="stat-label">Tick</span><span class="stat-value" id="tick-val">—</span></div>
+        <div class="stat-row"><span class="stat-label">Action</span><span class="stat-value action" id="action-val">—</span></div>
+        <div class="stat-row"><span class="stat-label">Outcome</span><span class="stat-value" id="outcome-val">—</span></div>
+        <div class="stat-row"><span class="stat-label">Mutations queued</span><span class="stat-value" id="mut-val">—</span></div>
+      </div>
+
+      <div class="card">
+        <h2>Nerva — active events</h2>
+        <ul class="event-list" id="active-events"><li class="empty">—</li></ul>
+      </div>
+
+      <div class="card">
+        <h2>Nerva — expected</h2>
+        <ul class="event-list" id="expected-events"><li class="empty">—</li></ul>
+      </div>
+    </aside>
+  </main>
+
+  <script>
+    const SPEEDS = [0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4];
+
+    let allFrames = [];
+    let episodes = {};
+    let currentEpisode = 0;
+    let frameIndex = 0;
+    let playing = false;
+    let timer = null;
+
+    const $ = (id) => document.getElementById(id);
+
+    function parseReplay(text) {
+      return text.trim().split('\n').filter(Boolean).map((line, i) => {
+        try {
+          return JSON.parse(line);
+        } catch (e) {
+          throw new Error(`Line ${i + 1}: invalid JSON`);
+        }
+      });
+    }
+
+    function groupByEpisode(frames) {
+      const groups = {};
+      for (const f of frames) {
+        const ep = f.episode ?? 0;
+        if (!groups[ep]) groups[ep] = [];
+        groups[ep].push(f);
+      }
+      return groups;
+    }
+
+    function inferActive(frame) {
+      if (frame.active && frame.active.length) return frame.active;
+      const events = [];
+      const grid = frame.grid || [];
+      let hasDoor = false, hasBlockAtDoor = false;
+      for (const row of grid) {
+        if (row.includes('D')) hasDoor = true;
+      }
+      const r = frame.runner, s = frame.seeker, b = frame.block;
+      if (r && s) {
+        const dist = Math.abs(r.x - s.x) + Math.abs(r.y - s.y);
+        if (dist <= 1) events.push('SEEKER_NEAR_RUNNER');
+      }
+      if (b && grid[b.y] && grid[b.y][b.x] === 'D') {
+        events.push('BLOCK_AT_DOORWAY', 'PATH_BLOCKED');
+      } else if (hasDoor) {
+        events.push('DOORWAY_OPEN', 'PATH_OPEN');
+      }
+      return events;
+    }
+
+    function cellClass(ch) {
+      if (ch === '#') return 'wall';
+      if (ch === 'D') return 'door';
+      if (ch === 'Z') return 'safe';
+      return 'floor';
+    }
+
+    function formatAction(a) {
+      if (!a) return '—';
+      return a.replace('ACTION_', '').replace(/_/g, ' ');
+    }
+
+    function formatOutcome(o) {
+      if (!o || o === 'NONE') return 'In progress';
+      return o.replace('RUNNER_', '').replace(/_/g, ' ');
+    }
+
+    function outcomeClass(o) {
+      if (o === 'RUNNER_ESCAPED') return 'outcome-escaped';
+      if (o === 'RUNNER_CAUGHT') return 'outcome-caught';
+      if (o === 'TIMEOUT') return 'outcome-timeout';
+      return '';
+    }
+
+    function renderFrame(frame) {
+      const board = $('board');
+      board.innerHTML = '';
+      const grid = frame.grid || [];
+      if (!grid.length) return;
+
+      const cols = grid[0].length;
+      board.style.gridTemplateColumns = `repeat(${cols}, 44px)`;
+
+      for (let y = 0; y < grid.length; y++) {
+        for (let x = 0; x < grid[y].length; x++) {
+          const ch = grid[y][x];
+          const cell = document.createElement('div');
+          cell.className = `cell ${cellClass(ch)}`;
+
+          const isRunner = frame.runner && frame.runner.x === x && frame.runner.y === y;
+          const isSeeker = frame.seeker && frame.seeker.x === x && frame.seeker.y === y;
+          const isBlock = frame.block && frame.block.x === x && frame.block.y === y;
+
+          if (isRunner) {
+            const t = document.createElement('div');
+            t.className = 'token runner';
+            t.textContent = 'R';
+            cell.appendChild(t);
+          }
+          if (isSeeker) {
+            const t = document.createElement('div');
+            t.className = 'token seeker';
+            t.textContent = 'S';
+            cell.appendChild(t);
+          }
+          if (isBlock) {
+            const t = document.createElement('div');
+            t.className = 'token block';
+            t.textContent = 'B';
+            cell.appendChild(t);
+          }
+
+          board.appendChild(cell);
+        }
+      }
+
+      $('tick-val').textContent = frame.tick ?? '—';
+      $('action-val').textContent = formatAction(frame.action);
+      const oc = $('outcome-val');
+      oc.textContent = formatOutcome(frame.outcome);
+      oc.className = 'stat-value ' + outcomeClass(frame.outcome);
+      $('mut-val').textContent = frame.queued_mutations ?? 0;
+
+      const active = inferActive(frame);
+      const activeEl = $('active-events');
+      activeEl.innerHTML = active.length
+        ? active.map(e => `<li>${e}</li>`).join('')
+        : '<li class="empty">None</li>';
+
+      const expected = frame.expected || [];
+      const expectedEl = $('expected-events');
+      expectedEl.innerHTML = expected.length
+        ? expected.map(e => `<li class="expected">${e}</li>`).join('')
+        : '<li class="empty">None</li>';
+    }
+
+    function framesForEpisode() {
+      return episodes[currentEpisode] || [];
+    }
+
+    function showFrame(index) {
+      const frames = framesForEpisode();
+      if (!frames.length) return;
+      frameIndex = Math.max(0, Math.min(index, frames.length - 1));
+      renderFrame(frames[frameIndex]);
+      $('scrubber').max = frames.length - 1;
+      $('scrubber').value = frameIndex;
+      $('frame-label').textContent = `${frameIndex + 1} / ${frames.length}`;
+    }
+
+    function populateEpisodes() {
+      const sel = $('episode-select');
+      sel.innerHTML = '';
+      const keys = Object.keys(episodes).map(Number).sort((a, b) => a - b);
+      for (const ep of keys) {
+        const opt = document.createElement('option');
+        opt.value = ep;
+        opt.textContent = `Episode ${ep} (${episodes[ep].length} frames)`;
+        sel.appendChild(opt);
+      }
+      currentEpisode = keys[0] ?? 0;
+      sel.value = currentEpisode;
+    }
+
+    function loadReplay(text) {
+      allFrames = parseReplay(text);
+      episodes = groupByEpisode(allFrames);
+      populateEpisodes();
+      frameIndex = 0;
+      playing = false;
+      $('btn-play').textContent = '▶';
+      clearInterval(timer);
+      $('empty-state').classList.add('hidden');
+      $('viewer').classList.remove('hidden');
+      showFrame(0);
+    }
+
+    function togglePlay() {
+      playing = !playing;
+      $('btn-play').textContent = playing ? '⏸' : '▶';
+      clearInterval(timer);
+      if (playing) {
+        const ms = SPEEDS[parseInt($('speed').value, 10) - 1];
+        const delay = 500 / ms;
+        timer = setInterval(() => {
+          const frames = framesForEpisode();
+          if (frameIndex >= frames.length - 1) {
+            togglePlay();
+            return;
+          }
+          showFrame(frameIndex + 1);
+        }, delay);
+      }
+    }
+
+    $('file-input').addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => loadReplay(reader.result);
+      reader.readAsText(file);
+    });
+
+    $('btn-demo').addEventListener('click', () => {
+      fetch('demo.jsonl')
+        .then(r => { if (!r.ok) throw new Error('demo.jsonl not found — run watch_tagworld.ps1 first'); return r.text(); })
+        .then(loadReplay)
+        .catch(err => alert(err.message));
+    });
+
+    $('episode-select').addEventListener('change', (e) => {
+      currentEpisode = parseInt(e.target.value, 10);
+      playing = false;
+      $('btn-play').textContent = '▶';
+      clearInterval(timer);
+      showFrame(0);
+    });
+
+    $('scrubber').addEventListener('input', (e) => showFrame(parseInt(e.target.value, 10)));
+    $('btn-prev').addEventListener('click', () => showFrame(frameIndex - 1));
+    $('btn-next').addEventListener('click', () => showFrame(frameIndex + 1));
+    $('btn-play').addEventListener('click', togglePlay);
+
+    $('speed').addEventListener('input', (e) => {
+      const ms = SPEEDS[parseInt(e.target.value, 10) - 1];
+      $('speed-label').textContent = ms + '×';
+      if (playing) { togglePlay(); togglePlay(); }
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if ($('viewer').classList.contains('hidden')) return;
+      if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
+      if (e.code === 'ArrowLeft') showFrame(frameIndex - 1);
+      if (e.code === 'ArrowRight') showFrame(frameIndex + 1);
+    });
+
+    const dropZone = $('empty-state');
+    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+    dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('dragover');
+      const file = e.dataTransfer.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => loadReplay(reader.result);
+      reader.readAsText(file);
+    });
+
+    fetch('demo.jsonl')
+      .then(r => r.ok ? r.text() : Promise.reject())
+      .then(loadReplay)
+      .then(() => togglePlay())
+      .catch(() => { /* no demo yet */ });
+  </script>
+</body>
+</html>

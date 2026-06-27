@@ -12,4 +12,8 @@ Discipline.md
 /experiments/**/script.log
 /experiments/**/persist.log
 /experiments/**/bench.log
+/experiments/**/prediction_trace.log
+/experiments/v11_tagworld_lite/run_*.log
+/experiments/v11_tagworld_lite/viewer/demo.jsonl
+/experiments/v11_tagworld_lite/learned_block_replay.log
 /experiments/**/*.nerva

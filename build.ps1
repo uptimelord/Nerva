@@ -7,7 +7,7 @@ $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 . (Join-Path $PSScriptRoot "scripts\toolchain.ps1")
 
-$CFLAGS = @("-std=c11", "-O2", "-Wall", "-Wextra", "-Wpedantic", "-Iinclude", "-Itests")
+$CFLAGS = @("-std=c11", "-O2", "-Wall", "-Wextra", "-Wpedantic", "-Iinclude", "-Itests", "-Itools")
 $LibSrc = @(
     "src/nerva_graph.c",
     "src/nerva_engine.c",
@@ -39,7 +39,12 @@ $TestSrc = @(
     "tests/test_parse.c",
     "tests/test_persist.c",
     "tests/test_bench.c",
+    "tests/test_tagworld.c",
     "tests/nerva_test_fixtures.c"
+)
+$TagworldSrc = @(
+    "tools/NERVA_tagworld.c",
+    "tools/NERVA_viz.c"
 )
 
 $build = Join-Path $PSScriptRoot "build"
@@ -72,6 +77,7 @@ if ($compiler.Kind -eq "gcc") {
     Write-Host "Using $($compiler.Path)"
     $libObjs = @()
     $testObjs = @()
+    $tagworldObjs = @()
     foreach ($src in $LibSrc) {
         $obj = Join-Path $build ([System.IO.Path]::GetFileName([System.IO.Path]::ChangeExtension($src, ".obj")))
         & $compiler.Path @CFLAGS -c $src -o $obj
@@ -84,12 +90,18 @@ if ($compiler.Kind -eq "gcc") {
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         $testObjs += $obj
     }
-    & $compiler.Path @CFLAGS -o $out @libObjs @testObjs
+    foreach ($src in $TagworldSrc) {
+        $obj = Join-Path $build ([System.IO.Path]::GetFileName([System.IO.Path]::ChangeExtension($src, ".obj")))
+        & $compiler.Path @CFLAGS -c $src -o $obj
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        $tagworldObjs += $obj
+    }
+    & $compiler.Path @CFLAGS -o $out @libObjs @testObjs @tagworldObjs
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 } else {
     Write-Host "Using MSVC via $($compiler.Path)"
-    $srcList = ($LibSrc + $TestSrc) -join " "
-    $cmd = "`"$($compiler.Path)`" >nul && cl /nologo /std:c11 /W3 /O2 /Iinclude /D_CRT_SECURE_NO_WARNINGS $srcList /Fe:$out"
+    $srcList = ($LibSrc + $TestSrc + $TagworldSrc) -join " "
+    $cmd = "`"$($compiler.Path)`" >nul && cl /nologo /std:c11 /W3 /O2 /Iinclude /Itests /Itools /D_CRT_SECURE_NO_WARNINGS $srcList /Fe:$out"
     cmd.exe /c $cmd
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
@@ -97,18 +109,26 @@ if ($compiler.Kind -eq "gcc") {
 Write-Host "Build OK"
 $cli = Join-Path $build "nerva_cli.exe"
 $bench = Join-Path $build "nerva_bench.exe"
+$tagworld = Join-Path $build "nerva_tagworld.exe"
 if ($compiler.Kind -eq "gcc") {
     & $compiler.Path @CFLAGS -o $cli (Join-Path $PSScriptRoot "tools\nerva_cli.c") @libObjs
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $compiler.Path @CFLAGS -o $bench (Join-Path $PSScriptRoot "tools\nerva_bench.c") @libObjs
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $compiler.Path @CFLAGS -o $tagworld (Join-Path $PSScriptRoot "tools\tagworld_cli.c") @libObjs @tagworldObjs
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 } else {
     $cliSrc = Join-Path $PSScriptRoot "tools\nerva_cli.c"
     $benchSrc = Join-Path $PSScriptRoot "tools\nerva_bench.c"
-    $cmd = "`"$($compiler.Path)`" >nul && cl /nologo /std:c11 /W3 /O2 /Iinclude /Itests /D_CRT_SECURE_NO_WARNINGS $cliSrc $(($libObjs) -join ' ') /Fe:$cli"
+    $tagworldSrcMain = Join-Path $PSScriptRoot "tools\tagworld_cli.c"
+    $tagworldObjList = ($TagworldSrc | ForEach-Object { Join-Path $build ([System.IO.Path]::GetFileName([System.IO.Path]::ChangeExtension($_, ".obj"))) }) -join ' '
+    $cmd = "`"$($compiler.Path)`" >nul && cl /nologo /std:c11 /W3 /O2 /Iinclude /Itests /Itools /D_CRT_SECURE_NO_WARNINGS $cliSrc $(($libObjs) -join ' ') /Fe:$cli"
     cmd.exe /c $cmd
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    $cmd = "`"$($compiler.Path)`" >nul && cl /nologo /std:c11 /W3 /O2 /Iinclude /Itests /D_CRT_SECURE_NO_WARNINGS $benchSrc $(($libObjs) -join ' ') /Fe:$bench"
+    $cmd = "`"$($compiler.Path)`" >nul && cl /nologo /std:c11 /W3 /O2 /Iinclude /Itests /Itools /D_CRT_SECURE_NO_WARNINGS $benchSrc $(($libObjs) -join ' ') /Fe:$bench"
+    cmd.exe /c $cmd
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    $cmd = "`"$($compiler.Path)`" >nul && cl /nologo /std:c11 /W3 /O2 /Iinclude /Itests /Itools /D_CRT_SECURE_NO_WARNINGS $tagworldSrcMain $(($libObjs) -join ' ') $tagworldObjList /Fe:$tagworld"
     cmd.exe /c $cmd
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }

@@ -1,5 +1,5 @@
 CC ?= gcc
-CFLAGS ?= -std=c11 -Wall -Wextra -Wpedantic -Iinclude -Itests
+CFLAGS ?= -std=c11 -Wall -Wextra -Wpedantic -Iinclude -Itests -Itools
 LDFLAGS ?=
 
 # Prefer repo-local toolchain on Windows (after scripts/bootstrap-toolchain.ps1)
@@ -50,6 +50,7 @@ TEST_SRCS = \
 	$(TEST_DIR)/test_parse.c \
 	$(TEST_DIR)/test_persist.c \
 	$(TEST_DIR)/test_bench.c \
+	$(TEST_DIR)/test_tagworld.c \
 	$(TEST_DIR)/nerva_test_fixtures.c
 TEST_OBJS = $(patsubst $(TEST_DIR)/%.c,$(BUILD_DIR)/%.o,$(TEST_SRCS))
 
@@ -57,15 +58,17 @@ ifeq ($(OS),Windows_NT)
 TEST_BIN = $(BUILD_DIR)/test_runner.exe
 CLI_BIN = $(BUILD_DIR)/nerva_cli.exe
 BENCH_BIN = $(BUILD_DIR)/nerva_bench.exe
+TAGWORLD_BIN = $(BUILD_DIR)/nerva_tagworld.exe
 else
 TEST_BIN = $(BUILD_DIR)/test_runner
 CLI_BIN = $(BUILD_DIR)/nerva_cli
 BENCH_BIN = $(BUILD_DIR)/nerva_bench
+TAGWORLD_BIN = $(BUILD_DIR)/nerva_tagworld
 endif
 
-.PHONY: all test cli bench clean bootstrap-toolchain
+.PHONY: all test cli bench tagworld clean bootstrap-toolchain
 
-all: test cli bench
+all: test cli bench tagworld
 
 bootstrap-toolchain:
 	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/bootstrap-toolchain.ps1
@@ -77,6 +80,8 @@ cli: $(CLI_BIN)
 
 bench: $(BENCH_BIN)
 
+tagworld: $(TAGWORLD_BIN)
+
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
@@ -86,14 +91,22 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
 $(BUILD_DIR)/%.o: $(TEST_DIR)/%.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(TEST_BIN): $(LIB_OBJS) $(TEST_OBJS)
-	$(CC) $(CFLAGS) $(LIB_OBJS) $(TEST_OBJS) -o $@ $(LDFLAGS)
+$(BUILD_DIR)/NERVA_%.o: $(TOOLS_DIR)/NERVA_%.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+TAGWORLD_OBJS = $(BUILD_DIR)/NERVA_tagworld.o $(BUILD_DIR)/NERVA_viz.o
+
+$(TEST_BIN): $(LIB_OBJS) $(TEST_OBJS) $(TAGWORLD_OBJS)
+	$(CC) $(CFLAGS) $(LIB_OBJS) $(TEST_OBJS) $(TAGWORLD_OBJS) -o $@ $(LDFLAGS)
 
 $(CLI_BIN): $(LIB_OBJS) $(TOOLS_DIR)/nerva_cli.c
 	$(CC) $(CFLAGS) $(TOOLS_DIR)/nerva_cli.c $(LIB_OBJS) -o $@ $(LDFLAGS)
 
 $(BENCH_BIN): $(LIB_OBJS) $(TOOLS_DIR)/nerva_bench.c
 	$(CC) $(CFLAGS) $(TOOLS_DIR)/nerva_bench.c $(LIB_OBJS) -o $@ $(LDFLAGS)
+
+$(TAGWORLD_BIN): $(LIB_OBJS) $(TAGWORLD_OBJS) $(TOOLS_DIR)/tagworld_cli.c
+	$(CC) $(CFLAGS) $(TOOLS_DIR)/tagworld_cli.c $(LIB_OBJS) $(TAGWORLD_OBJS) -o $@ $(LDFLAGS)
 
 clean:
 	rm -rf $(BUILD_DIR)

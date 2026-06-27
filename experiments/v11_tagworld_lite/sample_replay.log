@@ -1,0 +1,3 @@
+{"episode":0,"tick":0,"grid":["#######","#R....#","#.B.D.#","#.....#","#....S#","#....Z#","#######"],"runner":{"x":1,"y":1},"seeker":{"x":5,"y":4},"block":{"x":3,"y":2},"action":"ACTION_WAIT","outcome":"NONE","queued_mutations":0}
+{"episode":0,"tick":1,"grid":["#######","#R....#","#.B.D.#","#.....#","#...S.#","#....Z#","#######"],"runner":{"x":1,"y":1},"seeker":{"x":5,"y":3},"block":{"x":3,"y":2},"action":"ACTION_WAIT","outcome":"NONE","queued_mutations":0}
+{"episode":0,"tick":2,"grid":["#######","#R....#","#.B.D.#","#....S#","#.....#","#....Z#","#######"],"runner":{"x":1,"y":1},"seeker":{"x":5,"y":2},"block":{"x":3,"y":2},"action":"ACTION_WAIT","outcome":"NONE","queued_mutations":0}

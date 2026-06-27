@@ -1,6 +1,8 @@
 # Discipline — extended rules
 
-Root [`DISCIPLINE.md`](../DISCIPLINE.md) is the constitution. These files hold detailed, reusable rules.
+Root **`Discipline.md`** is the local constitution (**gitignored** — not in git). Agents must read it before any work. Template: [`Discipline.example.md`](../Discipline.example.md) → `cp Discipline.example.md Discipline.md`.
+
+Tracked **`discipline/`** holds detailed reusable rules. **`benchmarks/*/gate.md`** holds per-benchmark gates.
 
 ## Index
 
@@ -25,8 +27,7 @@ runs/                  raw logs (usually gitignored)
 worlds/                reusable simulators
 ```
 
-Simple rule:
-
-> `DISCIPLINE.md` says how Nerva science is done.  
+> `Discipline.md` (gitignored) says how Nerva science is done on this machine.  
+> `discipline/` says how Nerva science is done in shared tracked docs.  
 > `benchmarks/*/gate.md` says how one benchmark is judged.  
 > `experiments/*/results.md` says what actually happened.

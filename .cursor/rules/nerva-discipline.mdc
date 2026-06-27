@@ -1,0 +1,36 @@
+---
+description: Read local Discipline.md before any Nerva work; fall back to discipline/ if missing
+alwaysApply: true
+---
+
+# Nerva discipline — read first
+
+Before planning, coding, running experiments, or reviewing results in this repo:
+
+1. **Read `Discipline.md` at the repository root** (entire file). This file is **gitignored** and is the local constitution; it may differ per machine.
+2. If `Discipline.md` is missing, read `discipline/README.md` and the linked files under `discipline/` — then tell the user to create `Discipline.md` from `Discipline.example.md`.
+3. For benchmark work, also read the relevant `benchmarks/<name>/gate.md` before running or claiming results.
+4. For experiment evidence, follow `discipline/experiment_lifecycle.md` and claim discipline in `experiments/*/results.md`.
+
+## Non-negotiables (reminder)
+
+```text
+No trace, no trust.
+No hot-loop allocation.
+No graph mutation during propagation.
+Decision rule before results.
+Frozen evals stay frozen.
+```
+
+Do not weaken these even if `Discipline.md` is absent.
+
+## Layout
+
+```text
+Discipline.md     local constitution (gitignored — read every session)
+discipline/       tracked extended rules
+benchmarks/       stable gates
+experiments/      run evidence
+worlds/           simulators
+runs/             raw logs (gitignored)
+```

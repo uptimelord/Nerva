@@ -1,9 +1,9 @@
 /docs/
 Implementation Plan.md
-Discipline.md
 /toolchain/mingw64/
 /build/
 /build-sanitize/
+/runs/
 /experiments/**/trace.log
 /experiments/**/mutation.log
 /experiments/**/prediction.log
@@ -12,8 +12,8 @@ Discipline.md
 /experiments/**/script.log
 /experiments/**/persist.log
 /experiments/**/bench.log
+/experiments/**/run_*.log
 /experiments/**/prediction_trace.log
-/experiments/v11_tagworld_lite/run_*.log
-/experiments/v11_tagworld_lite/viewer/demo.jsonl
-/experiments/v11_tagworld_lite/learned_block_replay.log
+/experiments/**/full_trace.log
 /experiments/**/*.nerva
+/worlds/tagworld/viewer/demo.jsonl

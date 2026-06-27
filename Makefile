@@ -1,5 +1,5 @@
 CC ?= gcc
-CFLAGS ?= -std=c11 -Wall -Wextra -Wpedantic -Iinclude -Itests -Itools
+CFLAGS ?= -std=c11 -Wall -Wextra -Wpedantic -Iinclude -Itests -Itools -Iworlds/tagworld
 LDFLAGS ?=
 
 # Prefer repo-local toolchain on Windows (after scripts/bootstrap-toolchain.ps1)
@@ -17,6 +17,7 @@ BUILD_DIR = build
 SRC_DIR = src
 TEST_DIR = tests
 TOOLS_DIR = tools
+WORLD_TAGWORLD_DIR = worlds/tagworld
 
 LIB_SRCS = \
 	$(SRC_DIR)/nerva_graph.c \
@@ -91,10 +92,13 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
 $(BUILD_DIR)/%.o: $(TEST_DIR)/%.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/NERVA_%.o: $(TOOLS_DIR)/NERVA_%.c | $(BUILD_DIR)
+$(BUILD_DIR)/tagworld.o: $(WORLD_TAGWORLD_DIR)/tagworld.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-TAGWORLD_OBJS = $(BUILD_DIR)/NERVA_tagworld.o $(BUILD_DIR)/NERVA_viz.o
+$(BUILD_DIR)/tagworld_viz.o: $(WORLD_TAGWORLD_DIR)/tagworld_viz.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+TAGWORLD_OBJS = $(BUILD_DIR)/tagworld.o $(BUILD_DIR)/tagworld_viz.o
 
 $(TEST_BIN): $(LIB_OBJS) $(TEST_OBJS) $(TAGWORLD_OBJS)
 	$(CC) $(CFLAGS) $(LIB_OBJS) $(TEST_OBJS) $(TAGWORLD_OBJS) -o $@ $(LDFLAGS)

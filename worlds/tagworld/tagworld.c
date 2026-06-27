@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Paul Odantabao II
 
-#include "NERVA_viz.h"
+#include "tagworld_viz.h"
 
 #include "nerva_config.h"
 #include "nerva_debug.h"

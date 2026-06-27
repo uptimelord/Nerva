@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Paul Odantabao II
 
-#include "NERVA_tagworld.h"
+#include "tagworld.h"
 
 #include "nerva_config.h"
 #include "nerva_debug.h"
@@ -317,7 +317,7 @@ static void test_tagworld_viz_no_state_change(void) {
 }
 
 static void test_tagworld_replay_deterministic(void) {
-    const char *path = "experiments/v11_tagworld_lite/sample_replay.log";
+    const char *path = "benchmarks/tagworld_lite/sample_replay.log";
     TagWorldFrame f1;
     TagWorldFrame f2;
     FILE *in = fopen(path, "r");

@@ -1,0 +1,41 @@
+{
+  "experiment": "v1.1_tagworld_lite_promote",
+  "decision": "promote",
+  "tag": "v1.1.0",
+  "date": "2026-06-28",
+  "tests_passed": 98,
+  "observer_1k_seed1": {
+    "escape_rate": 0.667,
+    "caught": 333,
+    "timeouts": 0,
+    "avg_ticks_per_episode": 6.0,
+    "avg_mutations_per_episode": 4.67
+  },
+  "prediction_1k_seed1": {
+    "escape_rate": 0.667,
+    "prediction_confirm_count": 5002,
+    "prediction_miss_count": 1001,
+    "surprise_count": 1001,
+    "avg_mutations_per_episode": 6.0
+  },
+  "action_1k_seed1": {
+    "escape_rate": 1.0,
+    "baseline_escape_rate": 0.393,
+    "margin_pp": 60.7
+  },
+  "action_100_seed5": {
+    "escape_rate": 1.0,
+    "baseline_escape_rate": 0.39,
+    "margin_pp": 61.0
+  },
+  "action_100_seed11": {
+    "escape_rate": 1.0,
+    "baseline_escape_rate": 0.3,
+    "margin_pp": 70.0
+  },
+  "observer_100k_seed1": {
+    "escape_rate": 0.6666,
+    "caught": 33335,
+    "wall_time_seconds": 14
+  }
+}

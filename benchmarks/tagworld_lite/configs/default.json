@@ -1,0 +1,9 @@
+{
+  "grid": 7,
+  "max_ticks": 64,
+  "episodes": 1000,
+  "seeds": [1, 5, 11],
+  "modes": ["observer", "prediction", "action"],
+  "action_baseline_margin_pp": 20,
+  "stress_episodes": 100000
+}

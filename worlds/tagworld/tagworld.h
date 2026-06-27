@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 Paul Odantabao II
 
-#ifndef NERVA_TAGWORLD_H
-#define NERVA_TAGWORLD_H
+#ifndef TAGWORLD_H
+#define TAGWORLD_H
 
 #include "nerva_types.h"
 

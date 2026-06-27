@@ -1,0 +1,15 @@
+{
+  "map": "tool",
+  "mode": "action",
+  "online_tool": true,
+  "grid": 7,
+  "max_ticks": 64,
+  "episodes": 200,
+  "seeds": [1, 5, 11],
+  "window_episodes": 20,
+  "gate": {
+    "min_escape_margin_over_random": 0.20,
+    "min_action_push_doorway_count": 1,
+    "push_must_increase_across_windows": true
+  }
+}

@@ -116,6 +116,9 @@ typedef struct TagWorldNerva {
     TagWorldEventIds ev;
     TagWorldEdgeIds edge;
     TagWorldAction last_action;
+    TagWorldAction episode_first_action;
+    bool episode_used_push_doorway;
+    uint32_t episode_push_doorway_count;
     uint32_t last_active_count;
     uint32_t last_expected_count;
     uint32_t last_surprise_count;
@@ -137,6 +140,7 @@ typedef struct TagWorldConfig {
     const char *snapshot_out;
     bool run_baseline;
     bool skip_pretrain;
+    bool online_tool_acquisition;
     TagWorldMapId map_id;
 } TagWorldConfig;
 
@@ -161,6 +165,12 @@ typedef struct TagWorldMetrics {
     uint64_t action_run_count;
     uint64_t action_wait_count;
     uint64_t action_push_doorway_count;
+    uint64_t push_doorway_first_window;
+    uint64_t push_doorway_last_window;
+    uint64_t episodes_with_push_first_window;
+    uint64_t episodes_with_push_last_window;
+    uint64_t escaped_first_window;
+    uint64_t escaped_last_window;
     uint32_t learned_edge_count;
     uint32_t provisional_edge_count;
     uint64_t viz_frames;
@@ -229,7 +239,9 @@ void tagworld_nerva_observe_tick(NervaEngine *e, TagWorldNerva *tn, TagWorld *w,
                                  uint64_t *mut_applied_before);
 void tagworld_nerva_episode_feedback(NervaEngine *e, TagWorldNerva *tn, TagWorld *w,
                                      TagWorldAction action, TagWorldMode mode,
-                                     TagWorldMetrics *m, uint64_t *mut_applied_before);
+                                     bool online_tool_acquisition, TagWorldMetrics *m,
+                                     uint64_t *mut_applied_before);
+void tagworld_pretrain_for_config(NervaEngine *e, TagWorldNerva *tn, const TagWorldConfig *cfg);
 uint32_t tagworld_nerva_pending_expectation_target(const NervaEngine *e);
 int tagworld_nerva_prediction_confirm_pair(NervaEngine *e, TagWorldNerva *tn, uint32_t *confirm_out,
                                            uint32_t *miss_out, uint64_t *mut_applied_out);

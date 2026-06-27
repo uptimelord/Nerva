@@ -1,0 +1,39 @@
+{
+  "experiment": "v1.1.2_tagworld_online_tool_promote",
+  "decision": "promote",
+  "tag": "v1.1.2",
+  "date": "2026-06-28",
+  "tests_passed": 105,
+  "map": "tool_pressure",
+  "policy": "online_outcome_feedback_no_snapshot",
+  "online_200_seed1": {
+    "escape_rate": 0.68,
+    "baseline_escape_rate": 0.625,
+    "margin_pp": 5.5,
+    "episodes_with_push_first_window": 11,
+    "episodes_with_push_last_window": 18,
+    "escaped_first_window": 9,
+    "escaped_last_window": 10,
+    "action_push_doorway_count": 2305
+  },
+  "online_200_seed5": {
+    "escape_rate": 0.675,
+    "baseline_escape_rate": 0.715,
+    "margin_pp": -4.0,
+    "episodes_with_push_first_window": 10,
+    "episodes_with_push_last_window": 19,
+    "escaped_first_window": 0,
+    "escaped_last_window": 14,
+    "action_push_doorway_count": 2169
+  },
+  "online_200_seed11": {
+    "escape_rate": 0.68,
+    "baseline_escape_rate": 0.66,
+    "margin_pp": 2.0,
+    "episodes_with_push_first_window": 12,
+    "episodes_with_push_last_window": 18,
+    "escaped_first_window": 3,
+    "escaped_last_window": 13,
+    "action_push_doorway_count": 2294
+  }
+}

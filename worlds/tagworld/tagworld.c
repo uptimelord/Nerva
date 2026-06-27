@@ -992,7 +992,8 @@ void tagworld_nerva_observe_tick(NervaEngine *e, TagWorldNerva *tn, TagWorld *w,
 
 void tagworld_nerva_episode_feedback(NervaEngine *e, TagWorldNerva *tn, TagWorld *w,
                                      TagWorldAction action, TagWorldMode mode,
-                                     TagWorldMetrics *m, uint64_t *mut_applied_before) {
+                                     bool online_tool_acquisition, TagWorldMetrics *m,
+                                     uint64_t *mut_applied_before) {
     (void)action;
     nerva_set_prediction_mode(e, 0);
     nerva_prediction_clear(e);
@@ -1020,6 +1021,34 @@ void tagworld_nerva_episode_feedback(NervaEngine *e, TagWorldNerva *tn, TagWorld
         if (tagworld_is_doorway_open(w)) {
             tagworld_nerva_train_pair(e, tn, tn->ev.doorway_open, tn->edge.doorway_open_to_path_open,
                                       tn->ev.path_open, 1);
+        }
+    }
+
+    if (online_tool_acquisition && mode == TAGWORLD_MODE_ACTION) {
+        if (w->outcome == TAGWORLD_OUTCOME_ESCAPED &&
+            (tn->episode_used_push_doorway || tagworld_is_block_at_doorway(w))) {
+            tagworld_nerva_train_pair(e, tn, tn->ev.path_open, tn->edge.path_open_to_push_doorway,
+                                      tn->ev.action_push_block_to_doorway, 8);
+            tagworld_nerva_train_pair(e, tn, tn->ev.doorway_open, tn->edge.doorway_open_to_push_doorway,
+                                      tn->ev.action_push_block_to_doorway, 6);
+            tagworld_nerva_train_pair(e, tn, tn->ev.action_push_block_to_doorway,
+                                      tn->edge.push_doorway_to_block_at_doorway, tn->ev.block_at_doorway, 6);
+            tagworld_nerva_train_pair(e, tn, tn->ev.block_at_doorway,
+                                      tn->edge.block_at_doorway_to_path_blocked, tn->ev.path_blocked, 4);
+            tagworld_nerva_train_pair(e, tn, tn->ev.path_blocked, tn->edge.path_blocked_to_run_safe,
+                                      tn->ev.action_run_to_safe, 6);
+        } else if ((w->outcome == TAGWORLD_OUTCOME_CAUGHT ||
+                    w->outcome == TAGWORLD_OUTCOME_TIMEOUT) &&
+                   tagworld_is_doorway_open(w) && !tn->episode_used_push_doorway) {
+            nerva_activate_node(e, tn->ev.path_open, NERVA_Q8_8_ONE);
+            nerva_activate_node(e, tn->ev.doorway_open, NERVA_Q8_8_ONE);
+            nerva_tick_n(e, 4);
+            uint32_t action_node = tagworld_action_node(tn, tn->episode_first_action);
+            if (action_node != UINT32_MAX) {
+                nerva_activate_node(e, action_node, NERVA_Q8_8_ONE);
+            }
+            nerva_tick(e);
+            nerva_feedback_wrong(e);
         }
     }
 
@@ -1109,6 +1138,33 @@ void tagworld_nerva_count_edges(const NervaEngine *e, uint32_t *learned, uint32_
     if (provisional) {
         *provisional = p;
     }
+}
+
+static void tagworld_record_episode_action(TagWorldNerva *tn, TagWorldAction action) {
+    if (tn->episode_first_action >= TAG_ACTION_COUNT) {
+        tn->episode_first_action = action;
+    }
+    if (action == TAG_ACTION_PUSH_BLOCK_TO_DOORWAY) {
+        tn->episode_used_push_doorway = true;
+        tn->episode_push_doorway_count++;
+    }
+}
+
+static TagWorldAction tagworld_select_action_for_episode(NervaEngine *e, TagWorldNerva *tn,
+                                                         const TagWorld *w, uint32_t valid_mask,
+                                                         bool online_tool_acquisition,
+                                                         uint32_t episode) {
+    (void)episode;
+    if (online_tool_acquisition && (tagworld_xorshift() % 100u) < 15u) {
+        uint32_t rng = g_tagworld_rng;
+        TagWorldAction action = tagworld_random_action(w, &rng);
+        g_tagworld_rng = rng;
+        if (valid_mask & (1u << action)) {
+            tn->last_action = action;
+            return action;
+        }
+    }
+    return tagworld_nerva_select_action(e, tn, w, valid_mask);
 }
 
 static void tagworld_record_action_metric(TagWorldMetrics *m, TagWorldAction action) {
@@ -1321,9 +1377,13 @@ int tagworld_run_episode(NervaEngine *e, TagWorldNerva *tn, TagWorld *w,
                          const TagWorldConfig *cfg, TagWorldMetrics *m, FILE *replay_out) {
     tagworld_reset_for_config(w, cfg, (uint32_t)m->episodes);
     tn->last_action = TAG_ACTION_WAIT;
+    tn->episode_first_action = TAG_ACTION_COUNT;
+    tn->episode_used_push_doorway = false;
+    tn->episode_push_doorway_count = 0u;
     uint64_t mut_applied_before = e->debug.mutations_applied;
     nerva_prediction_clear(e);
-    if (cfg->mode == TAGWORLD_MODE_ACTION && cfg->map_id == TAGWORLD_MAP_TOOL_PRESSURE) {
+    if (cfg->mode == TAGWORLD_MODE_ACTION && cfg->map_id == TAGWORLD_MAP_TOOL_PRESSURE &&
+        !cfg->online_tool_acquisition) {
         tagworld_policy_snap_restore(e, &g_tool_policy_snap);
     }
     tagworld_nerva_quiesce_engine(e);
@@ -1358,7 +1418,10 @@ int tagworld_run_episode(NervaEngine *e, TagWorldNerva *tn, TagWorld *w,
             w->tick = t;
             nerva_debug_clear_fire_log(e);
             tagworld_emit_state_events(e, tn, w, m);
-            TagWorldAction action = tagworld_nerva_select_action(e, tn, w, tagworld_valid_action_mask(w));
+            uint32_t valid_mask = tagworld_valid_action_mask(w);
+            TagWorldAction action = tagworld_select_action_for_episode(
+                e, tn, w, valid_mask, cfg->online_tool_acquisition, (uint32_t)m->episodes);
+            tagworld_record_episode_action(tn, action);
             tagworld_record_action_metric(m, action);
             tagworld_apply_action(w, action);
             tagworld_step_seeker(w);
@@ -1392,7 +1455,33 @@ int tagworld_run_episode(NervaEngine *e, TagWorldNerva *tn, TagWorld *w,
         m->timeouts++;
     }
 
-    tagworld_nerva_episode_feedback(e, tn, w, tn->last_action, cfg->mode, m, &mut_applied_before);
+    tagworld_nerva_episode_feedback(e, tn, w, tn->last_action, cfg->mode, cfg->online_tool_acquisition,
+                                    m, &mut_applied_before);
+
+    if (cfg->online_tool_acquisition) {
+        static const uint32_t kWindow = 20u;
+        uint32_t ep = (uint32_t)m->episodes;
+        int escaped_ep = w->outcome == TAGWORLD_OUTCOME_ESCAPED;
+        if (ep < kWindow) {
+            m->push_doorway_first_window += tn->episode_push_doorway_count;
+            if (tn->episode_used_push_doorway) {
+                m->episodes_with_push_first_window++;
+            }
+            if (escaped_ep) {
+                m->escaped_first_window++;
+            }
+        }
+        if (cfg->episodes - ep <= kWindow) {
+            m->push_doorway_last_window += tn->episode_push_doorway_count;
+            if (tn->episode_used_push_doorway) {
+                m->episodes_with_push_last_window++;
+            }
+            if (escaped_ep) {
+                m->escaped_last_window++;
+            }
+        }
+    }
+
     m->episodes++;
 
     return 0;
@@ -1410,6 +1499,17 @@ static void tagworld_pretrain_tool_action_context(NervaEngine *e, TagWorldNerva 
         nerva_feedback_correct(e);
         nerva_apply_mutations(e);
     }
+}
+
+static void tagworld_pretrain_dynamics_only(NervaEngine *e, TagWorldNerva *tn) {
+    tagworld_nerva_train_pair(e, tn, tn->ev.block_at_doorway, tn->edge.block_at_doorway_to_path_blocked,
+                              tn->ev.path_blocked, 6);
+    tagworld_nerva_train_pair(e, tn, tn->ev.doorway_open, tn->edge.doorway_open_to_path_open,
+                              tn->ev.path_open, 4);
+    tagworld_nerva_train_pair(e, tn, tn->ev.path_blocked, tn->edge.path_blocked_to_escaped,
+                              tn->ev.runner_escaped, 4);
+    tagworld_nerva_train_pair(e, tn, tn->ev.path_open, tn->edge.path_open_to_caught, tn->ev.runner_caught,
+                              4);
 }
 
 static void tagworld_pretrain(NervaEngine *e, TagWorldNerva *tn, TagWorldMode mode,
@@ -1486,6 +1586,16 @@ static void tagworld_zero_action_policy_edges(NervaEngine *e, TagWorldNerva *tn)
     }
 }
 
+void tagworld_pretrain_for_config(NervaEngine *e, TagWorldNerva *tn, const TagWorldConfig *cfg) {
+    if (cfg->online_tool_acquisition && cfg->map_id == TAGWORLD_MAP_TOOL_PRESSURE &&
+        cfg->mode == TAGWORLD_MODE_ACTION) {
+        tagworld_pretrain_dynamics_only(e, tn);
+        tagworld_zero_action_policy_edges(e, tn);
+        return;
+    }
+    tagworld_pretrain(e, tn, cfg->mode, cfg->map_id);
+}
+
 int tagworld_run(NervaEngine *e, const TagWorldConfig *cfg, TagWorldMetrics *out) {
     TagWorldNerva tn;
     TagWorld w;
@@ -1509,13 +1619,13 @@ int tagworld_run(NervaEngine *e, const TagWorldConfig *cfg, TagWorldMetrics *out
     }
 
     if (!cfg->skip_pretrain) {
-        tagworld_pretrain(e, &tn, cfg->mode, cfg->map_id);
+        tagworld_pretrain_for_config(e, &tn, cfg);
     } else if (cfg->mode == TAGWORLD_MODE_ACTION) {
         tagworld_zero_action_policy_edges(e, &tn);
     }
 
     if (cfg->map_id == TAGWORLD_MAP_TOOL_PRESSURE && cfg->mode == TAGWORLD_MODE_ACTION &&
-        !cfg->skip_pretrain) {
+        !cfg->skip_pretrain && !cfg->online_tool_acquisition) {
         tagworld_policy_snap_save(e, &g_tool_policy_snap);
     } else {
         tagworld_policy_snap_free(&g_tool_policy_snap);
@@ -1590,6 +1700,14 @@ void tagworld_print_summary(const TagWorldMetrics *m, FILE *out) {
     fprintf(out, "action_run_count=%llu\n", (unsigned long long)m->action_run_count);
     fprintf(out, "action_wait_count=%llu\n", (unsigned long long)m->action_wait_count);
     fprintf(out, "action_push_doorway_count=%llu\n", (unsigned long long)m->action_push_doorway_count);
+    fprintf(out, "push_doorway_first_window=%llu\n", (unsigned long long)m->push_doorway_first_window);
+    fprintf(out, "push_doorway_last_window=%llu\n", (unsigned long long)m->push_doorway_last_window);
+    fprintf(out, "episodes_with_push_first_window=%llu\n",
+            (unsigned long long)m->episodes_with_push_first_window);
+    fprintf(out, "episodes_with_push_last_window=%llu\n",
+            (unsigned long long)m->episodes_with_push_last_window);
+    fprintf(out, "escaped_first_window=%llu\n", (unsigned long long)m->escaped_first_window);
+    fprintf(out, "escaped_last_window=%llu\n", (unsigned long long)m->escaped_last_window);
     fprintf(out, "learned_edge_count=%u\n", m->learned_edge_count);
     fprintf(out, "provisional_edge_count=%u\n", m->provisional_edge_count);
     fprintf(out, "viz_frames=%llu\n", (unsigned long long)m->viz_frames);

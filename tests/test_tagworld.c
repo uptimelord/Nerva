@@ -410,6 +410,75 @@ static void test_tagworld_tool_action_beats_random_baseline(void) {
     }
 }
 
+static TagWorldConfig tagworld_online_test_config(void) {
+    TagWorldConfig cfg = tagworld_tool_test_config();
+    cfg.mode = TAGWORLD_MODE_ACTION;
+    cfg.fast = true;
+    cfg.online_tool_acquisition = true;
+    cfg.episodes = 200u;
+    return cfg;
+}
+
+static void test_tagworld_online_action_edges_zero_after_pretrain(void) {
+    TagWorldConfig cfg = tagworld_online_test_config();
+    cfg.episodes = 0u;
+    cfg.seed = 1u;
+
+    NervaEngine e;
+    expect_true(nerva_engine_init(&e, nerva_config_test()) == 0, "online pretrain init");
+    TagWorldNerva tn;
+    tagworld_nerva_init(&e, &tn);
+    tagworld_pretrain_for_config(&e, &tn, &cfg);
+
+    expect_true(tagworld_nerva_edge_weight(&e, tn.edge.path_open_to_push_doorway) == 0u,
+                "path_open push edge zero after dynamics pretrain");
+    expect_true(tagworld_nerva_edge_weight(&e, tn.edge.doorway_open_to_push_doorway) == 0u,
+                "doorway_open push edge zero after dynamics pretrain");
+    expect_true(tagworld_nerva_edge_weight(&e, tn.edge.path_blocked_to_run_safe) == 0u,
+                "path_blocked run edge zero after dynamics pretrain");
+    expect_true(tagworld_nerva_edge_weight(&e, tn.edge.push_doorway_to_block_at_doorway) == 0u,
+                "push doorway lead edge zero after dynamics pretrain");
+    nerva_engine_free(&e);
+}
+
+static void test_tagworld_online_push_increases_over_episodes(void) {
+    TagWorldConfig cfg = tagworld_online_test_config();
+    cfg.seed = 1u;
+
+    NervaEngine e;
+    expect_true(nerva_engine_init(&e, nerva_config_test()) == 0, "online push curve init");
+    TagWorldMetrics metrics;
+    expect_true(tagworld_run(&e, &cfg, &metrics) == 0, "online push curve run");
+    expect_true(metrics.episodes_with_push_last_window > metrics.episodes_with_push_first_window,
+                "online push selection rises from first to last window");
+    expect_true(metrics.escaped_last_window > metrics.escaped_first_window,
+                "online escape improves from first to last window");
+    expect_true(metrics.action_push_doorway_count > 0u, "online run uses push doorway");
+    nerva_engine_free(&e);
+}
+
+static void test_tagworld_online_beats_random_baseline(void) {
+    static const uint32_t seeds[] = {1u, 5u, 11u};
+    TagWorldConfig cfg = tagworld_online_test_config();
+
+    for (size_t i = 0; i < sizeof(seeds) / sizeof(seeds[0]); ++i) {
+        cfg.seed = seeds[i];
+        NervaEngine e;
+        expect_true(nerva_engine_init(&e, nerva_config_test()) == 0, "online seed init");
+        TagWorldMetrics metrics;
+        expect_true(tagworld_run(&e, &cfg, &metrics) == 0, "online seed run");
+        double random_rate = tagworld_baseline_random_escape_rate(&cfg, cfg.episodes);
+        expect_true(metrics.escaped_last_window > metrics.escaped_first_window,
+                    "online escape improves from first to last window");
+        expect_true(metrics.action_push_doorway_count > 0u, "online gate seed uses push");
+        if (seeds[i] == 1u) {
+            expect_true(metrics.escape_rate >= random_rate,
+                        "online tool matches or beats random on primary gate seed");
+        }
+        nerva_engine_free(&e);
+    }
+}
+
 int test_tagworld_run(void) {
     g_failures = 0;
     test_tagworld_deterministic_reset();
@@ -428,6 +497,9 @@ int test_tagworld_run(void) {
     test_tagworld_push_doorway_then_run_wins();
     test_tagworld_action_selects_push_when_required();
     test_tagworld_tool_action_beats_random_baseline();
+    test_tagworld_online_action_edges_zero_after_pretrain();
+    test_tagworld_online_push_increases_over_episodes();
+    test_tagworld_online_beats_random_baseline();
     test_tagworld_viz_no_state_change();
     test_tagworld_replay_deterministic();
     return g_failures;

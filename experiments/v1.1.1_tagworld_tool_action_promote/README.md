@@ -27,4 +27,4 @@ then select that action by scoring learned graph edges
 
 ## Next
 
-[v1.1.2 Online Tool Acquisition](../../benchmarks/tagworld_tool_action/README.md) — outcome-driven tool acquisition without direct action pretrain.
+[v1.1.2 Online Tool Acquisition](../../benchmarks/tagworld_online_tool/README.md) — outcome-driven tool acquisition without direct action pretrain.

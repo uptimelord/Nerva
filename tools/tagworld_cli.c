@@ -24,6 +24,7 @@ static void print_usage(const char *prog) {
     printf("  --fast              no rendering, summary only\n");
     printf("  --viz               enable terminal ASCII visualizer\n");
     printf("  --baseline          track random action baseline (action mode)\n");
+    printf("  --online-tool       outcome-driven tool acquisition (no action pretrain)\n");
     printf("  --replay PATH       replay log (no learning)\n");
     printf("  --write-replay PATH write JSONL replay log\n");
     printf("  --snapshot-in PATH  load graph snapshot\n");
@@ -96,6 +97,8 @@ int main(int argc, char **argv) {
             cfg.viz = true;
         } else if (strcmp(argv[i], "--baseline") == 0) {
             cfg.run_baseline = true;
+        } else if (strcmp(argv[i], "--online-tool") == 0) {
+            cfg.online_tool_acquisition = true;
         } else if (strcmp(argv[i], "--replay") == 0 && i + 1 < argc) {
             cfg.replay = true;
             cfg.replay_path = argv[++i];

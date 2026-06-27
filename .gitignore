@@ -1,0 +1,15 @@
+/docs/
+Implementation Plan.md
+Discipline.md
+/toolchain/mingw64/
+/build/
+/build-sanitize/
+/experiments/**/trace.log
+/experiments/**/mutation.log
+/experiments/**/prediction.log
+/experiments/**/memory.log
+/experiments/**/routing.log
+/experiments/**/script.log
+/experiments/**/persist.log
+/experiments/**/bench.log
+/experiments/**/*.nerva

@@ -1,0 +1,7 @@
+NODE poodle
+NODE dog
+NODE animal
+EDGE poodle kind_of dog
+EDGE dog kind_of animal
+ACTIVATE poodle
+TICK 4

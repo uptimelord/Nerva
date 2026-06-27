@@ -1,0 +1,20 @@
+# Nerva toolchain (Windows)
+
+The compiler is not committed to git (~900 MB). After cloning:
+
+  powershell -ExecutionPolicy Bypass -File scripts\bootstrap-toolchain.ps1
+
+This downloads a pinned WinLibs build into toolchain/mingw64/ (gitignored).
+
+Options:
+  -Method download   fetch WinLibs zip (default for fresh clones)
+  -Method junction   link to an existing winget WinLibs install (fast, no extra disk)
+  -Method copy       full copy from winget install (offline-friendly)
+  -Global            install under Program Files\Nerva and add user PATH
+
+Then build:
+
+  .\build.bat          (Windows — recommended)
+  .\build.ps1
+  make bootstrap-toolchain   # first time only, if make is available
+  make test

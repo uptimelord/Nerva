@@ -1,0 +1,11 @@
+NODE bird
+NODE penguin
+NODE fly
+EDGE bird usually_has_property fly
+EDGE penguin kind_of bird
+BLOCK penguin fly
+APPLY
+ACTIVATE bird
+TICK 4
+ACTIVATE penguin
+TICK 4

@@ -1,0 +1,21 @@
+# Train kind_of transitive schema (default threshold=10; test config promotes at 3)
+SCHEMA OBSERVE A1 kind_of B1 kind_of C1
+SCHEMA OBSERVE A2 kind_of B2 kind_of C2
+SCHEMA OBSERVE A3 kind_of B3 kind_of C3
+SCHEMA OBSERVE A4 kind_of B4 kind_of C4
+SCHEMA OBSERVE A5 kind_of B5 kind_of C5
+SCHEMA OBSERVE A6 kind_of B6 kind_of C6
+SCHEMA OBSERVE A7 kind_of B7 kind_of C7
+SCHEMA OBSERVE A8 kind_of B8 kind_of C8
+SCHEMA OBSERVE A9 kind_of B9 kind_of C9
+SCHEMA OBSERVE A10 kind_of B10 kind_of C10
+# Held-out chain with premise edges only
+NODE X
+NODE Y
+NODE Z
+EDGE X kind_of Y
+EDGE Y kind_of Z
+SCHEMA APPLY X kind_of Y kind_of Z
+APPLY
+ACTIVATE X
+TICK 4

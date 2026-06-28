@@ -114,6 +114,8 @@ const char *tagworld_map_name(TagWorldMapId map_id) {
         return "tool_f";
     case TAGWORLD_MAP_TOOL_D_ALIAS:
         return "tool_d_alias";
+    case TAGWORLD_MAP_TOOL_G:
+        return "tool_g";
     case TAGWORLD_MAP_CORRIDOR:
     default:
         return "corridor";

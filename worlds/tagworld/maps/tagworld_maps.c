@@ -105,6 +105,26 @@ static void tagworld_init_tool_d_alias(TagWorld *w, int grid) {
     w->map_id = TAGWORLD_MAP_TOOL_D_ALIAS;
 }
 
+static void tagworld_init_tool_g(TagWorld *w, int grid) {
+    /* Held-out pressure map: block obstructs the sole short corridor; only the
+     * correct push opens the route, so random play frequently times out (leaving
+     * headroom) while the oracle push->run escapes. Distinct vertical-lane
+     * topology, not a clone of the train maps. */
+    tagworld_paint_border(w, grid);
+    for (int y = 2; y <= 4; ++y) {
+        tagworld_set_wall(w, 2, y);
+        tagworld_set_wall(w, 4, y);
+    }
+    for (int y = 2; y <= 4; ++y) {
+        tagworld_set_wall(w, 1, y);
+    }
+    tagworld_set_wall(w, 4, 3);
+    w->cells[4][2] = TAG_CELL_EMPTY;
+    w->cells[4][4] = TAG_CELL_EMPTY;
+    tagworld_place_chokepoint(w, (TagWorldPos){3, 3}, (TagWorldPos){4, 5});
+    w->map_id = TAGWORLD_MAP_TOOL_G;
+}
+
 static void tagworld_init_tool_e(TagWorld *w, int grid) {
     tagworld_init_tool_a(w, grid);
     w->map_id = TAGWORLD_MAP_TOOL_E;
@@ -117,7 +137,7 @@ static void tagworld_init_tool_f(TagWorld *w, int grid) {
 
 int tagworld_map_is_tool(TagWorldMapId map_id) {
     return (map_id >= TAGWORLD_MAP_TOOL_A && map_id <= TAGWORLD_MAP_TOOL_F) ||
-           map_id == TAGWORLD_MAP_TOOL_D_ALIAS;
+           map_id == TAGWORLD_MAP_TOOL_D_ALIAS || map_id == TAGWORLD_MAP_TOOL_G;
 }
 
 int tagworld_map_is_train_tool(TagWorldMapId map_id) {
@@ -126,7 +146,7 @@ int tagworld_map_is_train_tool(TagWorldMapId map_id) {
 
 int tagworld_map_is_held_out_tool(TagWorldMapId map_id) {
     return (map_id >= TAGWORLD_MAP_TOOL_D && map_id <= TAGWORLD_MAP_TOOL_F) ||
-           map_id == TAGWORLD_MAP_TOOL_D_ALIAS;
+           map_id == TAGWORLD_MAP_TOOL_D_ALIAS || map_id == TAGWORLD_MAP_TOOL_G;
 }
 
 int tagworld_map_is_d_geometry_alias(TagWorldMapId map_id) {
@@ -158,6 +178,8 @@ const char *tagworld_generalization_map_letter(TagWorldMapId map_id) {
         return "F";
     case TAGWORLD_MAP_TOOL_D_ALIAS:
         return "D'";
+    case TAGWORLD_MAP_TOOL_G:
+        return "G";
     default:
         return "?";
     }
@@ -193,6 +215,9 @@ void tagworld_init_map_for_id(TagWorld *w, TagWorldMapId map_id, int grid) {
         break;
     case TAGWORLD_MAP_TOOL_D_ALIAS:
         tagworld_init_tool_d_alias(w, grid);
+        break;
+    case TAGWORLD_MAP_TOOL_G:
+        tagworld_init_tool_g(w, grid);
         break;
     case TAGWORLD_MAP_TOOL_A:
     default:
@@ -251,6 +276,14 @@ void tagworld_reset_tool_spawns(TagWorld *w, TagWorldMapId map_id) {
         w->safe.x = 1;
         w->safe.y = 5;
         w->cells[w->safe.y][w->safe.x] = TAG_CELL_SAFE;
+        break;
+    case TAGWORLD_MAP_TOOL_G:
+        w->runner.x = 3;
+        w->runner.y = 1;
+        w->seeker.x = 3;
+        w->seeker.y = 5;
+        w->block.x = 3;
+        w->block.y = 2;
         break;
     case TAGWORLD_MAP_TOOL_A:
     default:

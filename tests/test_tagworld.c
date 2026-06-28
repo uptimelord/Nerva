@@ -789,6 +789,57 @@ static void test_tagworld_held_out_maps_push_then_run_wins(void) {
     }
 }
 
+static void test_tagworld_map_g_headroom(void) {
+    TagWorldConfig cfg = tagworld_tool_test_config();
+    cfg.map_id = TAGWORLD_MAP_TOOL_G;
+    cfg.max_ticks = 64u;
+
+    TagWorld w;
+    tagworld_reset_for_config(&w, &cfg, 0u);
+    int oracle =
+        tagworld_simulate_with_policy(&w, tagworld_push_then_run_policy, NULL, cfg.max_ticks);
+
+    double worst_random = 1.0;
+    double best_random = 0.0;
+    for (uint32_t seed = 1u; seed <= 11u; ++seed) {
+        TagWorldConfig rc = cfg;
+        rc.seed = seed;
+        double r = tagworld_baseline_random_escape_rate(&rc, 200u);
+        if (r < worst_random) {
+            worst_random = r;
+        }
+        if (r > best_random) {
+            best_random = r;
+        }
+    }
+
+    fprintf(stderr,
+            "MAP_G headroom: oracle_escaped=%d random_escape_min=%.3f random_escape_max=%.3f\n",
+            oracle == TAGWORLD_OUTCOME_ESCAPED ? 1 : 0, worst_random, best_random);
+
+    expect_true(oracle == TAGWORLD_OUTCOME_ESCAPED, "map G oracle push->run escapes (>=95% deterministic)");
+    expect_true(best_random <= 0.80, "map G random baseline not saturated (<=80%)");
+    expect_true(worst_random >= 0.20, "map G random baseline leaves pressure (>=20%)");
+}
+
+static void test_tagworld_map_g_not_clone_of_a(void) {
+    TagWorldConfig cfg = tagworld_tool_test_config();
+    TagWorld a;
+    TagWorld g;
+    tagworld_init_map_for_id(&a, TAGWORLD_MAP_TOOL_A, cfg.grid);
+    tagworld_init_map_for_id(&g, TAGWORLD_MAP_TOOL_G, cfg.grid);
+    int same_walls = 1;
+    for (int y = 0; y < a.height && same_walls; ++y) {
+        for (int x = 0; x < a.width; ++x) {
+            if (a.cells[y][x] != g.cells[y][x]) {
+                same_walls = 0;
+                break;
+            }
+        }
+    }
+    expect_true(!same_walls, "map G wall geometry differs from map A");
+}
+
 static void test_tagworld_map_d_not_clone_of_a(void) {
     TagWorldConfig cfg = tagworld_tool_test_config();
     TagWorld a;
@@ -1129,6 +1180,8 @@ int test_tagworld_run(void) {
     test_tagworld_generalization_eval_beats_random_on_D();
     test_tagworld_generalization_eval_no_mutations();
     test_tagworld_map_d_not_clone_of_a();
+    test_tagworld_map_g_headroom();
+    test_tagworld_map_g_not_clone_of_a();
     test_tagworld_generalization_rename_copy_invariance();
     test_tagworld_generalization_ablation_reduces_push();
     test_tagworld_generalization_abstract_trace_path();

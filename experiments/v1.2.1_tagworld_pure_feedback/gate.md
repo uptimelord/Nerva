@@ -9,10 +9,12 @@
 ## Command
 
 ```powershell
-.\build\nerva_tagworld.exe --generalization --pure-feedback --mode action --eval-map D --seed 1 --fast --baseline
+.\build\nerva_tagworld.exe --generalization --pure-feedback --mode action --eval-map G --seed 1 --fast --baseline
 ```
 
-Repeat for seeds 5 and 11.
+Repeat for seeds 5 and 11. Map **G** is the held-out pressure map (oracle 100%,
+random baseline ~0.62-0.72, not saturated). Map D is retired as primary eval pressure
+because its random baseline is 100%.
 
 ## Promote if
 
@@ -26,7 +28,9 @@ Repeat for seeds 5 and 11.
 ## Held-out pressure map
 
 Map D is retired as the primary eval pressure map for v1.2.1 because random baseline is saturated at 100%.
-Use **map G**: held-out, novel topology, oracle wins, random baseline 20-80%.
+Use **map G**: held-out, distinct vertical-lane topology (not a clone of A-F), oracle escape 100%,
+random escape baseline ~0.62-0.72 (measured seeds 1-11, 200 episodes). Pressure comes from the block
+obstructing the sole short corridor: random play frequently times out, the oracle push→run does not.
 
 > Gate requirement: random baseline must leave headroom. Promote only if random valid-action
 > baseline is between 20% and 80%, oracle push→run escape >= 95%, and learned frozen eval
@@ -36,6 +40,8 @@ Use **map G**: held-out, novel topology, oracle wins, random baseline 20-80%.
 
 - `test_tagworld_pure_feedback_no_oracle_train_pairs`
 - `test_tagworld_pure_feedback_records_action_traces`
+- `test_tagworld_map_g_headroom` (oracle escapes, random baseline in [0.20, 0.80])
+- `test_tagworld_map_g_not_clone_of_a`
 
 ## Not in scope for v1.2.1
 

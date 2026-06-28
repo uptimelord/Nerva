@@ -92,6 +92,10 @@ static int parse_map(const char *s, TagWorldMapId *map_id) {
         *map_id = TAGWORLD_MAP_TOOL_D_ALIAS;
         return 0;
     }
+    if (strcmp(s, "tool_g") == 0 || strcmp(s, "G") == 0) {
+        *map_id = TAGWORLD_MAP_TOOL_G;
+        return 0;
+    }
     return -1;
 }
 

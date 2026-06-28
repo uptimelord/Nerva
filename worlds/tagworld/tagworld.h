@@ -28,7 +28,8 @@ typedef enum TagWorldMapId {
     TAGWORLD_MAP_TOOL_D = 4,
     TAGWORLD_MAP_TOOL_E = 5,
     TAGWORLD_MAP_TOOL_F = 6,
-    TAGWORLD_MAP_TOOL_D_ALIAS = 7
+    TAGWORLD_MAP_TOOL_D_ALIAS = 7,
+    TAGWORLD_MAP_TOOL_G = 8
 } TagWorldMapId;
 
 typedef enum TagWorldCell {

@@ -1,27 +1,51 @@
 # v1.2.1.1 Results
 
-**Decision:** Promote (with seed-11 residual)
+**Decision:** Repeat
 
-v1.2.1.1 replaces blanket outcome-only pure feedback with **eligibility credit**: policy edges are
-strengthened or weakened only when the decision that used them produced an observed intermediate
-consequence (push→block, path_blocked→run→escape) or failed without improvement (wait→timeout).
-Oracle `train_pair` chains remain disabled.
+v1.2.1.1 implements eligibility credit and demonstrates partial online acquisition of the PUSH
+policy on held-out pressure map G.
 
-## Supported
+Seeds 1, 2, 3, 5, and 7 reach 100% frozen eval and select PUSH consistently after online learning.
+Seed 11 remains at 0% because exploration never observes a successful push→block consequence, so no
+eligibility credit is available to bootstrap context→PUSH edges.
 
-- Eligibility credit fires through the mutation queue with per-rule counters
-  (`eligibility_push_block_strengthen`, `eligibility_run_escape_strengthen`,
-  `eligibility_wait_timeout_weaken`, `eligibility_run_fail_weaken`).
-- On held-out pressure map G, seeds 1–7 achieve frozen eval escape 100% vs random baseline
-  0.59–0.74 (+20 pp margin met).
-- PUSH selection rises during learning (last-window episodes-with-push > first-window).
-- Ablation of learned push edges reduces push or escape (seed 1 unit test).
+This is a **strong Repeat**: the failure is now specific — **cold-start exploration coverage** — not
+"learning mechanism absent." Eligibility credit can acquire push policy when exploration samples
+push→block consequences.
+
+## Supported claim
+
+```text
+Nerva can learn PUSH policy edges online from zero without oracle escape train_pair chains
+when the relevant intermediate consequence is observed.
+```
+
+Evidence:
+
+- Eligibility credit fires through the mutation queue (`eligibility_push_block_strengthen`,
+  `eligibility_run_escape_strengthen`, `eligibility_wait_timeout_weaken`,
+  `eligibility_run_fail_weaken`).
+- PUSH context→action edges start at weight zero; ablation of learned push edges drops push or
+  escape (seed 1 unit test).
 - No oracle online `train_pair` chains (`test_tagworld_pure_feedback_no_oracle_train_pairs`).
+- Training on maps A/B/C, frozen eval on held-out G.
 
 ## Not supported
 
-- Universal convergence across all seeds: seed 11 fails (0% eval, zero push-block credit events).
-- Adversarial chase behavior — map G pressure is obstruction/path-clearance under tick pressure.
+```text
+This does not prove robust pure-feedback tool-schema acquisition.
+Dynamics and PATH_BLOCKED_BY_TOOL→RUN are still pretrained.
+Eligibility rules are engineered.
+Cold-start exploration failure can collapse performance.
+```
+
+Specifically **not** supported:
+
+- Robust pure-feedback tool acquisition across all seeds
+- Fully unsupervised tool-schema discovery
+- No-handholding learning
+- Run-after-block learned from scratch (`PATH_BLOCKED_BY_TOOL → RUN` is dynamics-pretrained via
+  `train_pair`; eligibility reinforces it online)
 
 ## Evidence
 
@@ -41,19 +65,30 @@ Oracle `train_pair` chains remain disabled.
 | 3    | 110               | 1.000       | 0.640       |
 | 7    | 68                | 1.000       | 0.600       |
 
-## Residuals / next gates
+## What this teaches
 
-- **Seed 11:** zero observed push→block consequences during learning; eligibility cannot bootstrap
-  push without at least one successful intermediate credit event. Track as exploration cold-start
-  stress, not v1.2.1.1 mechanism failure on seeds where push_block credit > 0.
-- v1.2.1 outcome-only credit superseded by eligibility rules in this commit.
+```text
+one action is not the behavior
+the behavior is a sequence
+```
+
+Outcome-only credit was too blunt. Eligibility credit closes part of the loop when intermediate
+consequences are observed. Seed 11 shows the circuit works when current flows through it; one seed
+never got current.
+
+## Next gate (v1.2.1.2)
+
+Fix **coverage exploration**, not stronger semantic scaffolding. See
+[v1.2.1.2 coverage exploration gate](../v1.2.1.2_tagworld_coverage_exploration/gate.md).
 
 ## Discipline claim
 
 ```text
-Supported:     pure-feedback tool-action acquisition on held-out map G via eligibility credit
-               (observed push→block, path_blocked→run→escape, wait→timeout weakening)
-Not supported: guaranteed convergence on every seed without intermediate push observations
+Supported:     online acquisition of context→PUSH policy edges from zero via eligibility credit
+               when push→block is observed; no oracle escape-chain train_pair injection
+Not supported: robust pure-feedback tool-schema acquisition; run-after-block from scratch;
+               no-handholding learning
 Evidence:      metrics above, unit tests, ablation test seed 1
-Residuals:     seed 11 exploration cold-start; static seeker / obstruction world (not pursuit)
+Residuals:     seed 11 cold-start; dynamics pretrain; engineered eligibility rules;
+               PATH_BLOCKED_BY_TOOL→RUN pretrained
 ```

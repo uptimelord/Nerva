@@ -1,8 +1,11 @@
 # v1.2.1.1 TagWorld Eligibility Credit — Gate
 
+**Decision:** Repeat (strong — mechanism proven where exploration observes push→block)
+
 ## Target claim
 
-> Tool-action acquisition from observed intermediate consequences and episode outcomes, without oracle edge injection.
+> Partial online acquisition of PUSH policy via eligibility credit on observed intermediate
+> consequences, without oracle escape-chain injection.
 
 ## Command
 
@@ -14,18 +17,26 @@ Repeat for seeds 5 and 11 (required gate seeds). Additional seeds 2, 3, 7 record
 
 ## Promote if
 
+*(Not met — see v1.2.1.2 for next gate.)*
+
 - No oracle `train_pair` chains run on escape (`--pure-feedback`) — **met**
-- PUSH selection rises during online learning on G — **met** (seeds 1–7: last window > first window)
+- PUSH selection rises during online learning on G — **met** (seeds 1–7)
 - Frozen eval >= random baseline + 20 pp on G — **met** (seeds 1–7); **NOT met** (seed 11)
 - Ablation of learned push edges drops push or escape — **met** (unit test seed 1)
-- Trace shows intermediate eligibility credit (push+block, run+escape, wait+timeout) — **met**
-- Oracle push→run escape >= 95% on G — **met** (inherited from map G)
-- Random baseline 20–80% on G — **met** (inherited from map G)
+- Trace shows intermediate eligibility credit — **met**
+- **Robust across all gate seeds** — **NOT met** (seed 11 at 0%)
 
 ## Kill if
 
 - Eligibility credit fires but eval never exceeds random on any seed after 200 learn episodes
 - Oracle `train_pair` chains run during pure-feedback learning
+
+## Handholding caveats (documented, not hidden)
+
+- Dynamics pretrain via `train_pair` (world structure, including `PATH_BLOCKED_BY_TOOL → RUN`)
+- Eligibility rules encode which consequences matter (engineered credit assignment)
+- 15% epsilon exploration during learn
+- Abstract adapter event vocabulary given
 
 ## Unit tests
 
@@ -37,8 +48,12 @@ Repeat for seeds 5 and 11 (required gate seeds). Additional seeds 2, 3, 7 record
 - `test_tagworld_pure_feedback_eligibility_ablation_reduces_push`
 - `test_tagworld_pure_feedback_no_oracle_train_pairs`
 
-## Residual (seed 11)
+## Seed 11 diagnosis
 
-Seed 11 records zero `eligibility_push_block_strengthen` events: exploration never observes a
-successful push→block consequence during learning, so push edges never receive intermediate credit
-and frozen eval stays at 0%. Treated as exploration-variance stress, not mechanism absence.
+Zero `eligibility_push_block_strengthen` events: exploration never observes push→block during
+learning. Failure mode is **cold-start exploration coverage**, not absent learning mechanism.
+
+## Next
+
+[v1.2.1.2 coverage exploration](../v1.2.1.2_tagworld_coverage_exploration/gate.md) — controlled
+coverage schedule, not stronger semantic scaffolding.

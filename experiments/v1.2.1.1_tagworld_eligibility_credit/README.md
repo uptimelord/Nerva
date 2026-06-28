@@ -1,7 +1,7 @@
 # v1.2.1.1 TagWorld Eligibility Credit
 
 **Base:** `v1.2.1`  
-**Status:** See [results.md](results.md)
+**Status:** Repeat — see [results.md](results.md)
 
 ## Target
 

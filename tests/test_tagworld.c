@@ -1030,6 +1030,71 @@ static void test_tagworld_generalization_abstract_trace_path(void) {
     nerva_engine_free(&e);
 }
 
+static void test_tagworld_pure_feedback_no_oracle_train_pairs(void) {
+    TagWorldConfig supervised = tagworld_generalization_test_config();
+    supervised.seed = 1u;
+    supervised.online_learn_episodes = 80u;
+    supervised.online_eval_episodes = 20u;
+
+    NervaEngine e;
+    expect_true(nerva_engine_init(&e, nerva_config_test()) == 0, "pure feedback supervised init");
+    tagworld_debug_reset_oracle_counters();
+    TagWorldGeneralizationResult supervised_result;
+    expect_true(tagworld_run_generalization_result(&e, &supervised, &supervised_result) == 0,
+                "pure feedback supervised baseline run");
+    uint64_t supervised_oracle = tagworld_debug_oracle_online_train_pair_rounds();
+    expect_true(supervised_oracle > 0u, "supervised mode uses oracle train_pair on escape");
+    nerva_engine_free(&e);
+
+    TagWorldConfig pure = supervised;
+    pure.pure_feedback = true;
+    expect_true(nerva_engine_init(&e, nerva_config_test()) == 0, "pure feedback init");
+    tagworld_debug_reset_oracle_counters();
+    TagWorldGeneralizationResult pure_result;
+    expect_true(tagworld_run_generalization_result(&e, &pure, &pure_result) == 0, "pure feedback run");
+    expect_true(tagworld_debug_oracle_online_train_pair_rounds() == 0u,
+                "pure feedback skips oracle train_pair chains");
+    nerva_engine_free(&e);
+}
+
+static void test_tagworld_pure_feedback_records_action_traces(void) {
+    NervaEngine e;
+    expect_true(nerva_engine_init(&e, nerva_config_test()) == 0, "pure feedback trace init");
+    TagWorldNerva tn;
+    expect_true(tagworld_nerva_init(&e, &tn) == 0, "pure feedback trace nerva init");
+
+    TagWorldConfig cfg = tagworld_generalization_test_config();
+    cfg.seed = 1u;
+    cfg.map_id = TAGWORLD_MAP_TOOL_D;
+    cfg.pure_feedback = true;
+    tagworld_pretrain_for_config(&e, &tn, &cfg);
+    e.edges[tn.edge.seeker_route_to_push_chokepoint].weight = NERVA_Q8_8_ONE;
+
+    TagWorld w;
+    tagworld_reset_for_config(&w, &cfg, 0u);
+    tagworld_set_abstract_tool_policy(1);
+    tagworld_set_pure_feedback(1);
+    tagworld_set_online_phase(TAGWORLD_ONLINE_LEARN);
+
+    nerva_debug_clear_fire_log(&e);
+    tagworld_nerva_emit_actual(&e, &tn, tn.ev.seeker_route_uses_chokepoint);
+    tagworld_nerva_emit_actual(&e, &tn, tn.ev.chokepoint_detected);
+    nerva_tick_n(&e, 2);
+
+    uint32_t before = nerva_trace_count_used_path(&e);
+    uint32_t valid = tagworld_valid_action_mask(&w);
+    TagWorldAction selected =
+        tagworld_nerva_select_action_scored(&e, &tn, &w, valid, NULL, NULL);
+    expect_true(selected == TAG_ACTION_PUSH_BLOCK_TO_DOORWAY,
+                "pure feedback trace test selects push from policy edge");
+    expect_true(nerva_trace_count_used_path(&e) > before,
+                "pure feedback records policy traces during action select");
+    tagworld_set_online_phase(TAGWORLD_ONLINE_NONE);
+    tagworld_set_pure_feedback(0);
+    tagworld_set_abstract_tool_policy(0);
+    nerva_engine_free(&e);
+}
+
 int test_tagworld_run(void) {
     g_failures = 0;
     test_tagworld_deterministic_reset();
@@ -1067,6 +1132,8 @@ int test_tagworld_run(void) {
     test_tagworld_generalization_rename_copy_invariance();
     test_tagworld_generalization_ablation_reduces_push();
     test_tagworld_generalization_abstract_trace_path();
+    test_tagworld_pure_feedback_no_oracle_train_pairs();
+    test_tagworld_pure_feedback_records_action_traces();
     test_tagworld_held_out_maps_push_then_run_wins();
     test_tagworld_viz_no_state_change();
     test_tagworld_replay_deterministic();

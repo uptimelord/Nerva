@@ -174,6 +174,7 @@ typedef struct TagWorldConfig {
     uint32_t online_anneal_episodes;
     bool action_score_trace;
     bool tool_generalization;
+    bool pure_feedback;
     TagWorldMapId generalization_eval_map;
     TagWorldMapId map_id;
 } TagWorldConfig;
@@ -266,6 +267,9 @@ typedef struct TagWorldFrame {
 
 void tagworld_config_defaults(TagWorldConfig *cfg);
 void tagworld_set_abstract_tool_policy(int enabled);
+void tagworld_set_pure_feedback(int enabled);
+uint64_t tagworld_debug_oracle_online_train_pair_rounds(void);
+void tagworld_debug_reset_oracle_counters(void);
 void tagworld_set_online_phase(TagWorldOnlinePhase phase);
 void tagworld_restore_online_learned_policy(NervaEngine *e);
 void tagworld_nerva_emit_state_events(NervaEngine *e, TagWorldNerva *tn, TagWorld *w,

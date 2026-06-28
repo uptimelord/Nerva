@@ -27,6 +27,7 @@ static void print_usage(const char *prog) {
     printf("  --online-tool       outcome-driven tool acquisition (no action pretrain)\n");
     printf("  --online-frozen     learn online then frozen eval (200+100 episodes)\n");
     printf("  --generalization    train maps A/B/C, frozen eval on held-out map\n");
+    printf("  --pure-feedback     learn from traces + outcomes only (no oracle train_pair)\n");
     printf("  --eval-map MAP      held-out eval map D|E|F (default D)\n");
     printf("  --learn-episodes N  online learn phase length (default 200)\n");
     printf("  --eval-episodes N   frozen eval phase length (default 100)\n");
@@ -138,6 +139,8 @@ int main(int argc, char **argv) {
             cfg.online_frozen_eval = true;
         } else if (strcmp(argv[i], "--generalization") == 0) {
             cfg.tool_generalization = true;
+        } else if (strcmp(argv[i], "--pure-feedback") == 0) {
+            cfg.pure_feedback = true;
         } else if (strcmp(argv[i], "--eval-map") == 0 && i + 1 < argc) {
             if (parse_map(argv[++i], &cfg.generalization_eval_map) != 0) {
                 fprintf(stderr, "Unknown eval map\n");

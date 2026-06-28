@@ -711,11 +711,53 @@ static TagWorldConfig tagworld_generalization_test_config(void) {
     cfg.fast = true;
     cfg.tool_generalization = true;
     cfg.generalization_eval_map = TAGWORLD_MAP_TOOL_D;
-    cfg.online_learn_episodes = 200u;
+    cfg.online_learn_episodes = 400u;
     cfg.online_eval_episodes = 100u;
     cfg.online_explore_pct = 15u;
+    cfg.online_coverage_episodes = 400u;
     cfg.run_baseline = true;
     return cfg;
+}
+
+static TagWorldConfig tagworld_pure_feedback_g_config(void) {
+    TagWorldConfig cfg = tagworld_generalization_test_config();
+    cfg.pure_feedback = true;
+    cfg.generalization_eval_map = TAGWORLD_MAP_TOOL_G;
+    return cfg;
+}
+
+static void test_tagworld_pure_feedback_no_dynamics_pretrain(void) {
+    NervaEngine e;
+    TagWorldNerva tn;
+    expect_true(nerva_engine_init(&e, nerva_config_test()) == 0, "pf no pretrain init");
+    expect_true(tagworld_nerva_init(&e, &tn) == 0, "pf no pretrain nerva init");
+    TagWorldConfig cfg = tagworld_pure_feedback_g_config();
+    tagworld_pretrain_for_config(&e, &tn, &cfg);
+    expect_true(e.edges[tn.edge.path_blocked_by_tool_to_run_safe].weight == 0,
+                "pure feedback skips dynamics pretrain for run edge");
+    expect_true(e.edges[tn.edge.chokepoint_to_push_chokepoint].weight == 0,
+                "pure feedback zeroes chokepoint to push edge");
+    nerva_engine_free(&e);
+}
+
+static void test_tagworld_pure_feedback_g_all_gate_seeds(void) {
+    static const uint32_t seeds[] = {1u, 2u, 3u, 5u, 7u, 11u};
+    TagWorldConfig cfg = tagworld_pure_feedback_g_config();
+
+    for (size_t i = 0; i < sizeof(seeds) / sizeof(seeds[0]); ++i) {
+        cfg.seed = seeds[i];
+        NervaEngine e;
+        expect_true(nerva_engine_init(&e, nerva_config_test()) == 0, "pf G gate seed init");
+        TagWorldGeneralizationResult result;
+        expect_true(tagworld_run_generalization_result(&e, &cfg, &result) == 0, "pf G gate seed run");
+        expect_true(result.eval_map == TAGWORLD_MAP_TOOL_G, "pf G gate eval map is G");
+        expect_true(result.train.push_block_observations > 0u,
+                    "pf G gate seed observes push block during learn");
+        expect_true(result.eval.escape_rate >= result.eval.baseline_escape_rate + 0.2,
+                    "pf G gate seed beats random by 20pp");
+        expect_true(result.eval.action_push_doorway_count > 0u, "pf G gate seed eval pushes");
+        nerva_engine_free(&e);
+    }
 }
 
 static void test_tagworld_generalization_train_push_increases(void) {
@@ -1423,10 +1465,8 @@ static void test_eligibility_run_escape_strengthens_run_edge(void) {
 }
 
 static void test_tagworld_pure_feedback_eligibility_ablation_reduces_push(void) {
-    TagWorldConfig cfg = tagworld_generalization_test_config();
+    TagWorldConfig cfg = tagworld_pure_feedback_g_config();
     cfg.seed = 1u;
-    cfg.pure_feedback = true;
-    cfg.generalization_eval_map = TAGWORLD_MAP_TOOL_G;
 
     NervaEngine e;
     expect_true(nerva_engine_init(&e, nerva_config_test()) == 0, "pf eligibility ablation init");
@@ -1444,7 +1484,7 @@ static void test_tagworld_pure_feedback_eligibility_ablation_reduces_push(void) 
     uint64_t push_before = result.eval.action_push_doorway_count;
     double escape_before = result.eval.escape_rate;
 
-    tagworld_ablate_learned_push_edges(&e, &tn);
+    tagworld_ablate_learned_policy_edges(&e, &tn);
 
     TagWorldConfig eval_cfg = cfg;
     eval_cfg.map_id = TAGWORLD_MAP_TOOL_G;
@@ -1505,6 +1545,8 @@ int test_tagworld_run(void) {
     test_eligibility_push_without_block_neutral_on_timeout();
     test_eligibility_run_escape_strengthens_run_edge();
     test_tagworld_pure_feedback_eligibility_ablation_reduces_push();
+    test_tagworld_pure_feedback_no_dynamics_pretrain();
+    test_tagworld_pure_feedback_g_all_gate_seeds();
     test_tagworld_held_out_maps_push_then_run_wins();
     test_tagworld_viz_no_state_change();
     test_tagworld_replay_deterministic();

@@ -208,6 +208,7 @@ typedef struct TagWorldConfig {
     uint32_t online_learn_episodes;
     uint32_t online_eval_episodes;
     uint32_t online_explore_pct;
+    uint32_t online_coverage_episodes;
     uint32_t online_anneal_episodes;
     bool action_score_trace;
     bool tool_generalization;
@@ -258,6 +259,8 @@ typedef struct TagWorldMetrics {
     uint64_t eligibility_run_escape_strengthen;
     uint64_t eligibility_wait_timeout_weaken;
     uint64_t eligibility_run_fail_weaken;
+    uint64_t coverage_explore_count;
+    uint64_t push_block_observations;
 } TagWorldMetrics;
 
 #define TAGWORLD_ACTION_SCORE_TRACE_MAX 12u
@@ -370,6 +373,7 @@ void tagworld_nerva_episode_feedback(NervaEngine *e, TagWorldNerva *tn, TagWorld
                                      uint64_t *mut_applied_before);
 void tagworld_pretrain_for_config(NervaEngine *e, TagWorldNerva *tn, const TagWorldConfig *cfg);
 void tagworld_ablate_learned_push_edges(NervaEngine *e, TagWorldNerva *tn);
+void tagworld_ablate_learned_policy_edges(NervaEngine *e, TagWorldNerva *tn);
 TagWorldOnlinePhase tagworld_online_phase(void);
 int tagworld_run_frozen_eval_only(NervaEngine *e, TagWorldNerva *tn, const TagWorldConfig *cfg,
                                   TagWorldMetrics *out);

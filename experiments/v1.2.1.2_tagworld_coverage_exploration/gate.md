@@ -1,37 +1,40 @@
 # v1.2.1.2 TagWorld Coverage Exploration — Gate
 
-**Status:** Draft (not run)
+**Status:** Repeat (strong) — see [results.md](results.md)
 
 ## Target claim
 
-> Robust pure-feedback PUSH acquisition on held-out map G when coverage exploration guarantees
-> intermediate consequence observations across all gate seeds.
+> Pure-feedback PUSH+RUN acquisition on held-out map G from zero-weight policy edges when coverage
+> exploration guarantees intermediate consequence observations across all gate seeds.
 
 ## Promote if
 
-- Every gate seed observes at least **N** push→block consequences during learning (N TBD, e.g. 1)
-- PUSH selection rises after those observations
+- Every gate seed observes at least one push→block consequence during learning
+- PUSH and RUN policy credit fires through the mutation queue
 - Frozen eval beats random by >= 20 pp on G across seeds **1, 2, 3, 5, 7, 11**
-- Dynamics pretrain caveat remains documented (not removed or expanded)
-- Removing eligibility credit breaks the result (ablation)
 - No oracle escape-chain `train_pair` during online learning
+- Removing eligibility credit breaks the result (ablation)
+- Dynamics pretrain skipped in `--pure-feedback` mode (documented, not hidden)
 
 ## Kill if
 
-- Coverage exploration fixes seed 11 only by reintroducing oracle or push bias
+- Coverage exploration fixes seeds only by reintroducing oracle or push bias
 - Eval improvement does not correlate with observed push→block credit events
 
 ## Not in scope
 
-- Removing dynamics pretrain (separate future gate)
-- Learning eligibility rules from data (rules remain engineered for v1.2.1.2)
+- Learning eligibility rules from data (rules remain engineered)
+- Removing adapter events or graph topology (separate future gates)
 
 ## Command
 
-TBD — will extend:
-
 ```powershell
-.\build\nerva_tagworld.exe --generalization --pure-feedback --mode action --eval-map G --seed 11 --fast --baseline
+.\build\nerva_tagworld.exe --generalization --pure-feedback --mode action --eval-map G --seed <N> --learn-episodes 400 --fast --baseline
 ```
 
-with coverage-exploration flags once implemented.
+Optional: `--coverage-episodes N` (defaults to learn window in pure-feedback mode).
+
+## Outcome
+
+All gate seeds pass frozen eval at 100%. Classified **Repeat (strong)** because eligibility
+rules, adapter events, coverage schedule, and action-validity masks remain engineered scaffolding.

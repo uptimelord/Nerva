@@ -1,7 +1,7 @@
 # v1.2.1.2 TagWorld Coverage Exploration
 
 **Base:** `v1.2.1.1`  
-**Status:** Not started
+**Status:** Repeat (strong) — see [results.md](results.md)
 
 ## Problem
 
@@ -29,4 +29,9 @@ See [gate.md](gate.md).
 
 ## Reproduce
 
-TBD after implementation.
+```powershell
+.\build\nerva_tagworld.exe --generalization --pure-feedback --mode action --eval-map G --seed 11 --learn-episodes 400 --fast --baseline
+.\build\test_runner.exe
+```
+
+See [results.md](results.md) for full gate table.

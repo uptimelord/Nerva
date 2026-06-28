@@ -209,6 +209,7 @@ typedef struct TagWorldConfig {
     uint32_t online_eval_episodes;
     uint32_t online_explore_pct;
     uint32_t online_coverage_episodes;
+    uint32_t online_coverage_until_push_block;
     uint32_t online_anneal_episodes;
     bool action_score_trace;
     bool tool_generalization;
@@ -290,6 +291,8 @@ typedef struct TagWorldGeneralizationResult {
     TagWorldMetrics train;
     TagWorldMetrics eval;
     TagWorldMapId eval_map;
+    uint32_t coverage_episodes_resolved;
+    uint32_t coverage_until_push_block;
 } TagWorldGeneralizationResult;
 
 typedef struct TagWorldFrame {
@@ -312,6 +315,9 @@ typedef struct TagWorldFrame {
     int32_t edge_delta;
     const char *edge_delta_label;
 } TagWorldFrame;
+
+/* Unset online_coverage_episodes: pure-feedback generalization defaults to full learn window. */
+#define TAGWORLD_COVERAGE_EPISODES_DEFAULT UINT32_MAX
 
 void tagworld_config_defaults(TagWorldConfig *cfg);
 void tagworld_set_abstract_tool_policy(int enabled);

@@ -25,6 +25,7 @@ static int g_abstract_tool_policy = 0;
 static int g_pure_feedback = 0;
 static uint64_t g_oracle_online_train_pair_rounds = 0;
 static uint32_t g_coverage_episode_tried = 0;
+static uint32_t g_train_cumulative_push_block_obs = 0;
 
 typedef struct TagWorldPolicySnap {
     NervaNode *nodes;
@@ -135,8 +136,23 @@ void tagworld_config_defaults(TagWorldConfig *cfg) {
     cfg->online_learn_episodes = 200u;
     cfg->online_eval_episodes = 100u;
     cfg->online_explore_pct = 15u;
+    cfg->online_coverage_episodes = TAGWORLD_COVERAGE_EPISODES_DEFAULT;
     cfg->online_anneal_episodes = 50u;
     cfg->generalization_eval_map = TAGWORLD_MAP_TOOL_D;
+}
+
+static void tagworld_resolve_coverage_config(TagWorldConfig *cfg) {
+    if (cfg->online_coverage_until_push_block > 0u) {
+        return;
+    }
+    if (cfg->online_coverage_episodes == TAGWORLD_COVERAGE_EPISODES_DEFAULT) {
+        if (cfg->pure_feedback) {
+            uint32_t learn = cfg->online_learn_episodes > 0u ? cfg->online_learn_episodes : 200u;
+            cfg->online_coverage_episodes = learn;
+        } else {
+            cfg->online_coverage_episodes = 0u;
+        }
+    }
 }
 
 void tagworld_set_pure_feedback(int enabled) {
@@ -741,7 +757,17 @@ static TagWorldAction tagworld_pick_untried_valid_action(uint32_t valid_mask, ui
 }
 
 static bool tagworld_in_coverage_phase(const TagWorldConfig *cfg, uint32_t episode) {
-    return cfg->online_coverage_episodes > 0u && episode < cfg->online_coverage_episodes;
+    uint32_t learn_cap =
+        cfg->online_learn_episodes > 0u ? cfg->online_learn_episodes : cfg->episodes;
+    if (cfg->online_coverage_until_push_block > 0u) {
+        return g_train_cumulative_push_block_obs < cfg->online_coverage_until_push_block &&
+               episode < learn_cap;
+    }
+    if (cfg->online_coverage_episodes == TAGWORLD_COVERAGE_EPISODES_DEFAULT ||
+        cfg->online_coverage_episodes == 0u) {
+        return false;
+    }
+    return episode < cfg->online_coverage_episodes;
 }
 
 TagWorldAction tagworld_random_action(const TagWorld *w, uint32_t *rng) {
@@ -2159,6 +2185,7 @@ int tagworld_run_episode(NervaEngine *e, TagWorldNerva *tn, TagWorld *w,
             if (tagworld_is_push_to_chokepoint_action(d->selected_action) &&
                 d->led_to_block_at_chokepoint) {
                 m->push_block_observations++;
+                g_train_cumulative_push_block_obs++;
             }
         }
     }
@@ -2498,9 +2525,8 @@ static int tagworld_run_generalization(NervaEngine *e, const TagWorldConfig *cfg
     TagWorldConfig gen_cfg = *cfg;
     gen_cfg.tool_generalization = true;
     gen_cfg.map_id = TAGWORLD_MAP_TOOL_A;
-    if (gen_cfg.pure_feedback && gen_cfg.online_coverage_episodes == 0u) {
-        gen_cfg.online_coverage_episodes = gen_cfg.online_learn_episodes;
-    }
+    g_train_cumulative_push_block_obs = 0u;
+    tagworld_resolve_coverage_config(&gen_cfg);
 
     if (!cfg->skip_pretrain) {
         tagworld_pretrain_for_config(e, &tn, &gen_cfg);
@@ -2571,6 +2597,8 @@ static int tagworld_run_generalization(NervaEngine *e, const TagWorldConfig *cfg
         out->train = train;
         out->eval = eval;
         out->eval_map = eval_map;
+        out->coverage_episodes_resolved = gen_cfg.online_coverage_episodes;
+        out->coverage_until_push_block = gen_cfg.online_coverage_until_push_block;
     }
 
     return 0;
@@ -2811,6 +2839,8 @@ void tagworld_print_generalization_summary(const TagWorldGeneralizationResult *r
     const TagWorldMetrics *eval = &r->eval;
     fprintf(out, "generalization_result=1\n");
     fprintf(out, "eval_map=%s\n", tagworld_generalization_map_letter(r->eval_map));
+    fprintf(out, "coverage_episodes_resolved=%u\n", r->coverage_episodes_resolved);
+    fprintf(out, "coverage_until_push_block=%u\n", r->coverage_until_push_block);
     fprintf(out, "train_escape_rate=%.4f\n", train->escape_rate);
     fprintf(out, "train_episodes_with_push_first_window=%llu\n",
             (unsigned long long)train->episodes_with_push_first_window);

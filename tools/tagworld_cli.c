@@ -29,6 +29,8 @@ static void print_usage(const char *prog) {
     printf("  --generalization    train maps A/B/C, frozen eval on held-out map\n");
     printf("  --pure-feedback     learn from traces + outcomes only (no oracle train_pair)\n");
     printf("  --coverage-episodes N  per-episode valid-action coverage during early learn\n");
+    printf("                         (0 = epsilon only; unset defaults to learn window in pure-feedback)\n");
+    printf("  --coverage-until-push-block N  coverage until N push->block observations\n");
     printf("  --eval-map MAP      held-out eval map D|E|F (default D)\n");
     printf("  --learn-episodes N  online learn phase length (default 200)\n");
     printf("  --eval-episodes N   frozen eval phase length (default 100)\n");
@@ -148,6 +150,8 @@ int main(int argc, char **argv) {
             cfg.pure_feedback = true;
         } else if (strcmp(argv[i], "--coverage-episodes") == 0 && i + 1 < argc) {
             cfg.online_coverage_episodes = (uint32_t)strtoul(argv[++i], NULL, 10);
+        } else if (strcmp(argv[i], "--coverage-until-push-block") == 0 && i + 1 < argc) {
+            cfg.online_coverage_until_push_block = (uint32_t)strtoul(argv[++i], NULL, 10);
         } else if (strcmp(argv[i], "--eval-map") == 0 && i + 1 < argc) {
             if (parse_map(argv[++i], &cfg.generalization_eval_map) != 0) {
                 fprintf(stderr, "Unknown eval map\n");

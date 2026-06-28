@@ -2,6 +2,7 @@
 // Copyright 2026 Paul Odantabao II
 
 #include "tagworld.h"
+#include "maps/tagworld_maps.h"
 
 #include "nerva_config.h"
 #include "nerva_debug.h"
@@ -744,8 +745,9 @@ static void test_tagworld_generalization_eval_beats_random_on_D(void) {
         TagWorldGeneralizationResult result;
         expect_true(tagworld_run_generalization_result(&e, &cfg, &result) == 0, "gen eval seed run");
         expect_true(result.eval_map == TAGWORLD_MAP_TOOL_D, "default held-out eval is map D");
-        expect_true(result.eval.escape_rate >= result.eval.baseline_escape_rate + 0.20,
-                    "held-out map D beats random by >=20pp");
+        expect_true(tagworld_generalization_beats_random_gate(result.eval.escape_rate,
+                                                            result.eval.baseline_escape_rate),
+                    "held-out map D beats random by >=20pp (or saturated baseline at 100% eval)");
         expect_true(result.eval.action_push_doorway_count > 0u, "held-out eval uses push action");
         nerva_engine_free(&e);
     }
@@ -787,6 +789,247 @@ static void test_tagworld_held_out_maps_push_then_run_wins(void) {
     }
 }
 
+static void test_tagworld_map_d_not_clone_of_a(void) {
+    TagWorldConfig cfg = tagworld_tool_test_config();
+    TagWorld a;
+    TagWorld d;
+    tagworld_init_map_for_id(&a, TAGWORLD_MAP_TOOL_A, cfg.grid);
+    tagworld_init_map_for_id(&d, TAGWORLD_MAP_TOOL_D, cfg.grid);
+    int same_walls = 1;
+    for (int y = 0; y < a.height; ++y) {
+        for (int x = 0; x < a.width; ++x) {
+            if (a.cells[y][x] != d.cells[y][x]) {
+                same_walls = 0;
+                break;
+            }
+        }
+        if (!same_walls) {
+            break;
+        }
+    }
+    expect_true(!same_walls, "map D wall geometry differs from map A");
+}
+
+static void test_tagworld_generalization_rename_copy_invariance(void) {
+    TagWorldConfig cfg = tagworld_generalization_test_config();
+    cfg.seed = 1u;
+
+    NervaEngine e;
+    expect_true(nerva_engine_init(&e, nerva_config_test()) == 0, "invariance init");
+    TagWorldNerva tn;
+    TagWorldGeneralizationResult result;
+    expect_true(tagworld_run_generalization_result(&e, &cfg, &result) == 0, "invariance learn+eval D");
+    tagworld_nerva_init(&e, &tn);
+
+    TagWorldConfig alias_cfg = cfg;
+    alias_cfg.generalization_eval_map = TAGWORLD_MAP_TOOL_D_ALIAS;
+    alias_cfg.map_id = TAGWORLD_MAP_TOOL_D_ALIAS;
+    TagWorldMetrics alias_eval;
+    expect_true(tagworld_run_frozen_eval_only(&e, &tn, &alias_cfg, &alias_eval) == 0,
+                "invariance frozen eval on D alias");
+
+    expect_true(result.eval.escape_rate == alias_eval.escape_rate,
+                "alias preserves escape rate");
+    expect_true(result.eval.escaped == alias_eval.escaped, "alias preserves escaped count");
+    expect_true(result.eval.caught == alias_eval.caught, "alias preserves caught count");
+    expect_true(result.eval.timeouts == alias_eval.timeouts, "alias preserves timeout count");
+    expect_true(result.eval.action_push_doorway_count == alias_eval.action_push_doorway_count,
+                "alias preserves push action count");
+    expect_true(result.eval.action_run_count == alias_eval.action_run_count,
+                "alias preserves run action count");
+    nerva_engine_free(&e);
+}
+
+static void test_tagworld_generalization_ablation_reduces_push(void) {
+    TagWorldConfig cfg = tagworld_generalization_test_config();
+    cfg.seed = 1u;
+
+    NervaEngine e;
+    expect_true(nerva_engine_init(&e, nerva_config_test()) == 0, "gen ablation init");
+    TagWorldNerva tn;
+    TagWorldGeneralizationResult result;
+    expect_true(tagworld_run_generalization_result(&e, &cfg, &result) == 0, "gen ablation full run");
+    tagworld_nerva_init(&e, &tn);
+
+    uint32_t push_edge_before =
+        tagworld_nerva_edge_weight(&e, tn.edge.seeker_route_to_push_chokepoint);
+    if (push_edge_before == 0u) {
+        push_edge_before =
+            tagworld_nerva_edge_weight(&e, tn.edge.block_can_reach_to_push_chokepoint);
+    }
+    expect_true(push_edge_before > 0u, "gen learned chokepoint push edge before ablation");
+
+    uint64_t push_before = result.eval.action_push_doorway_count;
+    double escape_before = result.eval.escape_rate;
+
+    tagworld_ablate_learned_push_edges(&e, &tn);
+
+    TagWorldConfig eval_cfg = cfg;
+    eval_cfg.map_id = TAGWORLD_MAP_TOOL_D;
+    TagWorldMetrics ablated;
+    expect_true(tagworld_run_frozen_eval_only(&e, &tn, &eval_cfg, &ablated) == 0, "gen ablated eval");
+    expect_true(ablated.action_push_doorway_count < push_before ||
+                    ablated.escape_rate < escape_before,
+                "gen ablation reduces push usage or escape");
+    nerva_engine_free(&e);
+}
+
+typedef struct TagWorldAbstractEpisodeTrace {
+    bool chokepoint_detected;
+    bool seeker_route_uses_chokepoint;
+    bool block_can_reach_chokepoint;
+    bool action_push_block_to_doorway;
+    bool block_at_chokepoint;
+    bool path_blocked_by_tool;
+    bool action_run_to_safe;
+    bool runner_escaped;
+    uint32_t first_push_tick;
+    uint32_t first_block_at_tick;
+    uint32_t first_path_blocked_tick;
+    uint32_t first_run_tick;
+} TagWorldAbstractEpisodeTrace;
+
+static void tagworld_trace_mark_event(TagWorldAbstractEpisodeTrace *tr, uint32_t node_id,
+                                      const TagWorldNerva *tn, uint32_t tick) {
+    if (node_id == tn->ev.chokepoint_detected) {
+        tr->chokepoint_detected = true;
+    } else if (node_id == tn->ev.seeker_route_uses_chokepoint) {
+        tr->seeker_route_uses_chokepoint = true;
+    } else if (node_id == tn->ev.block_can_reach_chokepoint) {
+        tr->block_can_reach_chokepoint = true;
+    } else if (node_id == tn->ev.action_push_block_to_doorway) {
+        tr->action_push_block_to_doorway = true;
+        if (tr->first_push_tick == UINT32_MAX) {
+            tr->first_push_tick = tick;
+        }
+    } else if (node_id == tn->ev.block_at_chokepoint) {
+        tr->block_at_chokepoint = true;
+        if (tr->first_block_at_tick == UINT32_MAX) {
+            tr->first_block_at_tick = tick;
+        }
+    } else if (node_id == tn->ev.path_blocked_by_tool) {
+        tr->path_blocked_by_tool = true;
+        if (tr->first_path_blocked_tick == UINT32_MAX) {
+            tr->first_path_blocked_tick = tick;
+        }
+    } else if (node_id == tn->ev.action_run_to_safe) {
+        tr->action_run_to_safe = true;
+        if (tr->first_run_tick == UINT32_MAX) {
+            tr->first_run_tick = tick;
+        }
+    } else if (node_id == tn->ev.runner_escaped) {
+        tr->runner_escaped = true;
+    }
+}
+
+static void tagworld_trace_absorb_fire_log(TagWorldAbstractEpisodeTrace *tr, const NervaEngine *e,
+                                           const TagWorldNerva *tn, uint32_t tick) {
+    for (uint32_t i = 0; i < e->fire_log_count; ++i) {
+        tagworld_trace_mark_event(tr, e->fire_log[i].node_id, tn, tick);
+    }
+}
+
+static void test_tagworld_generalization_abstract_trace_path(void) {
+    TagWorldConfig cfg = tagworld_generalization_test_config();
+    cfg.seed = 1u;
+    cfg.online_eval_episodes = 100u;
+
+    NervaEngine e;
+    expect_true(nerva_engine_init(&e, nerva_config_test()) == 0, "abstract trace init");
+    TagWorldGeneralizationResult result;
+    expect_true(tagworld_run_generalization_result(&e, &cfg, &result) == 0, "abstract trace run");
+    expect_true(result.eval.escaped > 0u, "abstract trace has escaped episodes");
+
+    TagWorldNerva tn;
+    tagworld_nerva_init(&e, &tn);
+    TagWorldConfig eval_cfg = cfg;
+    eval_cfg.map_id = TAGWORLD_MAP_TOOL_D;
+    eval_cfg.episodes = 100u;
+    eval_cfg.online_tool_acquisition = false;
+    eval_cfg.tool_generalization = true;
+
+    TagWorld w;
+    TagWorldMetrics metrics;
+    memset(&metrics, 0, sizeof(metrics));
+    metrics.seed = cfg.seed;
+    metrics.mode = cfg.mode;
+
+    tagworld_set_online_phase(TAGWORLD_ONLINE_EVAL);
+    tagworld_set_abstract_tool_policy(1);
+
+    TagWorldAbstractEpisodeTrace best;
+    memset(&best, 0, sizeof(best));
+    best.first_push_tick = UINT32_MAX;
+    best.first_block_at_tick = UINT32_MAX;
+    best.first_path_blocked_tick = UINT32_MAX;
+    best.first_run_tick = UINT32_MAX;
+
+    for (uint32_t ep = 0; ep < eval_cfg.episodes; ++ep) {
+        TagWorldAbstractEpisodeTrace tr;
+        memset(&tr, 0, sizeof(tr));
+        tr.first_push_tick = UINT32_MAX;
+        tr.first_block_at_tick = UINT32_MAX;
+        tr.first_path_blocked_tick = UINT32_MAX;
+        tr.first_run_tick = UINT32_MAX;
+
+        tagworld_restore_online_learned_policy(&e);
+        tagworld_reset_for_config(&w, &eval_cfg, ep);
+        tn.episode_used_push_doorway = false;
+        tn.episode_push_doorway_count = 0u;
+
+        for (uint32_t t = 0; t < eval_cfg.max_ticks && !w.done; ++t) {
+            w.tick = t;
+            e.event_count = 0;
+            e.active_count = 0;
+            e.expectation_count = 0;
+            nerva_debug_clear_fire_log(&e);
+            tagworld_nerva_emit_state_events(&e, &tn, &w, &metrics);
+            tagworld_nerva_tick_quiet(&e, 4);
+            tagworld_trace_absorb_fire_log(&tr, &e, &tn, t);
+
+            uint32_t valid_mask = tagworld_valid_action_mask(&w);
+            TagWorldAction action =
+                tagworld_nerva_select_action(&e, &tn, &w, valid_mask);
+            if (action == TAG_ACTION_PUSH_BLOCK_TO_DOORWAY) {
+                tagworld_trace_mark_event(&tr, tn.ev.action_push_block_to_doorway, &tn, t);
+            } else if (action == TAG_ACTION_RUN_TO_SAFE) {
+                tagworld_trace_mark_event(&tr, tn.ev.action_run_to_safe, &tn, t);
+            }
+            tagworld_apply_action(&w, action);
+            tagworld_step_seeker(&w);
+            tagworld_check_outcome(&w);
+        }
+
+        if (w.outcome == TAGWORLD_OUTCOME_ESCAPED && tr.action_push_block_to_doorway &&
+            tr.action_run_to_safe) {
+            best = tr;
+            break;
+        }
+    }
+
+    tagworld_set_online_phase(TAGWORLD_ONLINE_NONE);
+
+    expect_true(best.action_push_block_to_doorway && best.action_run_to_safe,
+                "abstract trace finds escaped episode with push then run");
+    expect_true(best.chokepoint_detected || best.seeker_route_uses_chokepoint ||
+                    best.block_can_reach_chokepoint,
+                "abstract trace shows chokepoint context before tool action");
+    expect_true(best.action_push_block_to_doorway, "abstract trace selects push tool action");
+    expect_true(best.block_at_chokepoint, "abstract trace reaches block at chokepoint");
+    expect_true(best.path_blocked_by_tool, "abstract trace reaches path blocked by tool");
+    expect_true(best.action_run_to_safe, "abstract trace selects run to safe");
+    expect_true(best.first_push_tick != UINT32_MAX && best.first_block_at_tick != UINT32_MAX &&
+                    best.first_path_blocked_tick != UINT32_MAX && best.first_run_tick != UINT32_MAX,
+                "abstract trace records ordered action milestones");
+    expect_true(best.first_push_tick <= best.first_block_at_tick,
+                "abstract trace push precedes block at chokepoint");
+    expect_true(best.first_block_at_tick <= best.first_path_blocked_tick,
+                "abstract trace block at chokepoint precedes path blocked");
+    expect_true(best.first_path_blocked_tick <= best.first_run_tick,
+                "abstract trace path blocked precedes run");
+    nerva_engine_free(&e);
+}
+
 int test_tagworld_run(void) {
     g_failures = 0;
     test_tagworld_deterministic_reset();
@@ -820,6 +1063,10 @@ int test_tagworld_run(void) {
     test_tagworld_generalization_train_push_increases();
     test_tagworld_generalization_eval_beats_random_on_D();
     test_tagworld_generalization_eval_no_mutations();
+    test_tagworld_map_d_not_clone_of_a();
+    test_tagworld_generalization_rename_copy_invariance();
+    test_tagworld_generalization_ablation_reduces_push();
+    test_tagworld_generalization_abstract_trace_path();
     test_tagworld_held_out_maps_push_then_run_wins();
     test_tagworld_viz_no_state_change();
     test_tagworld_replay_deterministic();

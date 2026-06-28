@@ -1,25 +1,14 @@
-# v1.2 TagWorld Generalization (RC)
+# v1.2 TagWorld Generalization
 
-**Base:** `v1.1.3.1` (action-score hardening)  
-**Decision:** Repeat — harness landed; final promote blocked  
-**Tag:** none (do not tag `v1.2` final yet)
+**Base:** `v1.1.3.1`  
+**Decision:** Promote (`v1.2` final)  
+**RC:** `74f1e4f`
 
-**Question:** Did Nerva learn coordinates of one tool map, or a reusable chokepoint/tool schema?
+## Claim
 
-**Approach:** Train on maps A/B/C with abstract adapter events; frozen eval on held-out D/E/F.
+Supervised abstract tool-schema transfer across maps via adapter-emitted chokepoint events + frozen eval.
 
-## Classification
-
-```text
-v1.2 current (this commit):
-  abstract adapter + supervised transfer harness
-
-v1.2 final (blocked):
-  abstract transfer across genuinely held-out topology
-
-v1.2.1 (next):
-  pure feedback / less supervised tool-schema acquisition
-```
+**Not claimed:** pure feedback, zero-shot invention, generalization beyond adapter events.
 
 ## Reproduce
 
@@ -27,6 +16,8 @@ v1.2.1 (next):
 ./build.ps1
 ./experiments/v1.2_tagworld_generalization/commands.sh
 ```
+
+Invariance: frozen eval on `--eval-map D'` must match `--eval-map D`.
 
 ## Status
 

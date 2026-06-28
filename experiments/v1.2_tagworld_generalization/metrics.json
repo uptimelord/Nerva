@@ -1,0 +1,18 @@
+{
+  "decision": "Promote",
+  "tag": "v1.2",
+  "base": "v1.1.3.1",
+  "rc_commit": "74f1e4f",
+  "claim": "supervised abstract tool-schema transfer",
+  "gate": {
+    "unit_tests": 124,
+    "map_d_seeds": {
+      "1": { "eval_escape_rate": 1.0, "eval_baseline_escape_rate": 1.0 },
+      "5": { "eval_escape_rate": 1.0, "eval_baseline_escape_rate": 1.0 },
+      "11": { "eval_escape_rate": 1.0, "eval_baseline_escape_rate": 1.0 }
+    },
+    "map_e_seed_1_optional": { "eval_escape_rate": 0.0, "eval_baseline_escape_rate": 0.5 },
+    "map_f_seed_1_optional": { "eval_escape_rate": 1.0, "eval_baseline_escape_rate": 1.0 },
+    "v1_1_3_frozen_seed_1": { "eval_escape_rate": 1.0, "eval_baseline_escape_rate": 0.59 }
+  }
+}

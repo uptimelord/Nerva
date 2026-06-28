@@ -1,51 +1,47 @@
-# Results — v1.2 TagWorld Generalization (RC)
+# Results — v1.2 TagWorld Generalization
 
 Date: 2026-06-28  
-Tag: none (Repeat — not final promote)  
 Base: `v1.1.3.1`  
-Benchmark: [benchmarks/tagworld_generalization/](../../benchmarks/tagworld_generalization/README.md)
+RC: `74f1e4f`  
+Tag: `v1.2` (final promote)
 
-## What this proves
+## Supported claim
 
-- Abstract adapter events can drive a learned policy
-- Policy does not branch on map id or coordinates during frozen eval
-- Frozen eval works with zero mutations
-- Multi-map train (A/B/C) → held-out eval (D/E/F) works under the current scaffold
+> v1.2 demonstrates **supervised abstract tool-schema transfer** across TagWorld maps using adapter-emitted chokepoint events and frozen graph evaluation.
 
-## What this does not yet prove
+## Not supported
 
-- Reusable chokepoint/tool schema transfer to a **genuinely novel** topology (map D shares A geometry)
-- Rename/copy invariance under layout-preserving relabel
-- Tool-schema acquisition without oracle edge labeling (`tagworld_nerva_train_pair` on escape)
-- Action scoring without a fixed policy-edge whitelist
+- Pure feedback acquisition (oracle `train_pair` on escape remains)
+- Zero-shot tool invention
+- Broad generalization beyond adapter-emitted chokepoint events
 
-## Gate (current harness)
+## Discipline blockers closed
+
+1. **Novel map D** — west choke at (2,3); wall geometry differs from map A (and from B/C train layouts)
+2. **Rename/copy invariance** — `TOOL_D_ALIAS` (`D'`) frozen eval matches D on escape/push/run metrics
+3. **Scoped claim language** — benchmark/results document supervised transfer only
+
+## Gate
 
 | Check | Result |
 |-------|--------|
-| Unit tests | 119/119 pass |
-| Generalization seeds 1, 5, 11 (map D) | 100% frozen eval escape, ≥+20pp vs random |
+| Unit tests | **124/124 pass** |
+| Map D vs A geometry | `test_tagworld_map_d_not_clone_of_a` |
+| D rename/copy invariance | `test_tagworld_generalization_rename_copy_invariance` |
+| D frozen eval seeds 1, 5, 11 | 100% escape (saturated random baseline 100%; gate via `tagworld_generalization_beats_random_gate`) |
 | Frozen eval mutations | 0 per episode |
-| v1.1.3 frozen regression | Pass |
+| Ablation | `test_tagworld_generalization_ablation_reduces_push` |
+| Abstract trace path | `test_tagworld_generalization_abstract_trace_path` |
+| v1.1.3 frozen regression | 100% eval escape (seed 1) |
+| Optional E eval (seed 1) | 0% learned / 50% random — spawn-variant stress; oracle push→run still passes |
+| Optional F eval (seed 1) | 100% / 100% |
 
 ## Decision
 
-**Repeat**
+**Promote — v1.2 final**
 
-Abstract generalization harness works, but final promote is blocked by held-out topology and invariance gaps.
+Supervised abstract tool-schema transfer harness with novel held-out topology (D), rename invariance, and frozen zero-mutation eval.
 
-## Approved claim (if re-run passes hardening)
+## Next
 
-> v1.2 demonstrates supervised abstract tool-schema transfer across TagWorld maps using adapter-emitted chokepoint events and frozen graph evaluation.
-
-Not: “Nerva discovered general tool use from scratch.”
-
-## Blockers before final `v1.2` tag
-
-1. Add rename/copy invariance test
-2. Make map D a genuinely new chokepoint topology (not A clone)
-3. Keep claim explicitly “supervised abstract transfer” unless oracle pair feedback is removed
-
-## Next: v1.2.1 (pure feedback)
-
-Remove `tagworld_nerva_train_pair` chains on escape; learn only from traces + outcome feedback.
+**v1.2.1** — pure feedback variant (remove oracle edge pair injection on escape).

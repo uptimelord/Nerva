@@ -110,6 +110,8 @@ const char *tagworld_map_name(TagWorldMapId map_id) {
         return "tool_e";
     case TAGWORLD_MAP_TOOL_F:
         return "tool_f";
+    case TAGWORLD_MAP_TOOL_D_ALIAS:
+        return "tool_d_alias";
     case TAGWORLD_MAP_CORRIDOR:
     default:
         return "corridor";
@@ -134,6 +136,10 @@ void tagworld_config_defaults(TagWorldConfig *cfg) {
 
 void tagworld_set_abstract_tool_policy(int enabled) {
     g_abstract_tool_policy = enabled ? 1 : 0;
+}
+
+void tagworld_set_online_phase(TagWorldOnlinePhase phase) {
+    g_online_phase = phase;
 }
 
 static void tagworld_init_map_corridor(TagWorld *w, int grid) {
@@ -1096,6 +1102,11 @@ static void tagworld_emit_state_events(NervaEngine *e, TagWorldNerva *tn, TagWor
     tagworld_metrics_track_queue(e, m);
 }
 
+void tagworld_nerva_emit_state_events(NervaEngine *e, TagWorldNerva *tn, TagWorld *w,
+                                      TagWorldMetrics *m) {
+    tagworld_emit_state_events(e, tn, w, m);
+}
+
 static void tagworld_prediction_resolve_actual(NervaEngine *e, TagWorldNerva *tn, const TagWorld *w) {
     if (tagworld_is_block_at_doorway(w)) {
         nerva_inject_edge_event(e, tn->edge.block_at_doorway_to_path_blocked, NERVA_Q8_8_ONE);
@@ -1567,6 +1578,10 @@ static void tagworld_policy_snap_restore(NervaEngine *e, const TagWorldPolicySna
     }
     memcpy(e->nodes, snap->nodes, snap->node_count * sizeof(NervaNode));
     memcpy(e->edges, snap->edges, snap->edge_count * sizeof(NervaEdge));
+}
+
+void tagworld_restore_online_learned_policy(NervaEngine *e) {
+    tagworld_policy_snap_restore(e, &g_online_learned_snap);
 }
 
 static void tagworld_finalize_run_metrics(NervaEngine *e, const TagWorldConfig *cfg,
@@ -2093,6 +2108,17 @@ int tagworld_run_generalization_result(NervaEngine *e, const TagWorldConfig *cfg
         return -1;
     }
     return tagworld_run_generalization(e, cfg, out);
+}
+
+int tagworld_generalization_beats_random_gate(double escape_rate, double baseline_rate) {
+    const double margin = 0.20;
+    if (escape_rate + 1e-9 < margin) {
+        return 0;
+    }
+    if (baseline_rate + margin <= 1.0 + 1e-9) {
+        return escape_rate + 1e-9 >= baseline_rate + margin;
+    }
+    return escape_rate + 1e-9 >= 1.0;
 }
 
 int tagworld_run_frozen_result(NervaEngine *e, const TagWorldConfig *cfg, TagWorldFrozenResult *out) {

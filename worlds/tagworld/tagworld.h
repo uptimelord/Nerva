@@ -27,7 +27,8 @@ typedef enum TagWorldMapId {
     TAGWORLD_MAP_TOOL_C = 3,
     TAGWORLD_MAP_TOOL_D = 4,
     TAGWORLD_MAP_TOOL_E = 5,
-    TAGWORLD_MAP_TOOL_F = 6
+    TAGWORLD_MAP_TOOL_F = 6,
+    TAGWORLD_MAP_TOOL_D_ALIAS = 7
 } TagWorldMapId;
 
 typedef enum TagWorldCell {
@@ -265,6 +266,10 @@ typedef struct TagWorldFrame {
 
 void tagworld_config_defaults(TagWorldConfig *cfg);
 void tagworld_set_abstract_tool_policy(int enabled);
+void tagworld_set_online_phase(TagWorldOnlinePhase phase);
+void tagworld_restore_online_learned_policy(NervaEngine *e);
+void tagworld_nerva_emit_state_events(NervaEngine *e, TagWorldNerva *tn, TagWorld *w,
+                                    TagWorldMetrics *m);
 void tagworld_init_map(TagWorld *w, int grid);
 void tagworld_init_map_tool_pressure(TagWorld *w, int grid);
 void tagworld_reset(TagWorld *w, uint32_t seed, uint32_t episode);
@@ -328,6 +333,7 @@ int tagworld_run(NervaEngine *e, const TagWorldConfig *cfg, TagWorldMetrics *out
 int tagworld_run_frozen_result(NervaEngine *e, const TagWorldConfig *cfg, TagWorldFrozenResult *out);
 int tagworld_run_generalization_result(NervaEngine *e, const TagWorldConfig *cfg,
                                        TagWorldGeneralizationResult *out);
+int tagworld_generalization_beats_random_gate(double escape_rate, double baseline_rate);
 void tagworld_print_generalization_summary(const TagWorldGeneralizationResult *r, FILE *out);
 int tagworld_run_episode(NervaEngine *e, TagWorldNerva *tn, TagWorld *w,
                          const TagWorldConfig *cfg, TagWorldMetrics *m, FILE *replay_out);

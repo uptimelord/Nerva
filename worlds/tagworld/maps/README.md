@@ -7,9 +7,10 @@ Train maps emit abstract adapter events; Nerva scores actions from relation stru
 | A (`TOOL_A`, `tool_pressure`) | Train | Doorway chokepoint left |
 | B (`TOOL_B`) | Train | Doorway chokepoint right |
 | C (`TOOL_C`) | Train | Corridor bend chokepoint |
-| D (`TOOL_D`) | Held-out eval | Same choke geometry as A (held out of train rotation) |
-| E (`TOOL_E`) | Held-out eval | Same walls as A, block start south of doorway |
-| F (`TOOL_F`) | Held-out eval | Same as A, safe zone at (1,5) |
+| D (`TOOL_D`) | Held-out eval | West choke at (2,3), distinct from A/B/C |
+| D' (`TOOL_D_ALIAS`) | Invariance eval | Same geometry/spawns as D, different map id |
+| E (`TOOL_E`) | Held-out eval | A walls, block start south of doorway |
+| F (`TOOL_F`) | Held-out eval | A walls, safe zone at (1,5) |
 
 Abstract events (adapter output, not policy logic):
 

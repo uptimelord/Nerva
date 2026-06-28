@@ -78,9 +78,31 @@ static void tagworld_init_tool_c(TagWorld *w, int grid) {
     w->map_id = TAGWORLD_MAP_TOOL_C;
 }
 
+static void tagworld_init_tool_d_layout(TagWorld *w, int grid) {
+    tagworld_paint_border(w, grid);
+    /* West choke lane: doorway at (2,3), distinct from A center and B right choke. */
+    for (int x = 2; x <= 4; ++x) {
+        tagworld_set_wall(w, x, 2);
+        tagworld_set_wall(w, x, 4);
+    }
+    for (int x = 3; x <= 5; ++x) {
+        tagworld_set_wall(w, x, 1);
+    }
+    tagworld_set_wall(w, 3, 4);
+    tagworld_set_wall(w, 1, 3);
+    w->cells[2][1] = TAG_CELL_EMPTY;
+    w->cells[2][5] = TAG_CELL_EMPTY;
+    tagworld_place_chokepoint(w, (TagWorldPos){2, 3}, (TagWorldPos){5, 4});
+}
+
 static void tagworld_init_tool_d(TagWorld *w, int grid) {
-    tagworld_init_tool_a(w, grid);
+    tagworld_init_tool_d_layout(w, grid);
     w->map_id = TAGWORLD_MAP_TOOL_D;
+}
+
+static void tagworld_init_tool_d_alias(TagWorld *w, int grid) {
+    tagworld_init_tool_d_layout(w, grid);
+    w->map_id = TAGWORLD_MAP_TOOL_D_ALIAS;
 }
 
 static void tagworld_init_tool_e(TagWorld *w, int grid) {
@@ -94,7 +116,8 @@ static void tagworld_init_tool_f(TagWorld *w, int grid) {
 }
 
 int tagworld_map_is_tool(TagWorldMapId map_id) {
-    return map_id >= TAGWORLD_MAP_TOOL_A && map_id <= TAGWORLD_MAP_TOOL_F;
+    return (map_id >= TAGWORLD_MAP_TOOL_A && map_id <= TAGWORLD_MAP_TOOL_F) ||
+           map_id == TAGWORLD_MAP_TOOL_D_ALIAS;
 }
 
 int tagworld_map_is_train_tool(TagWorldMapId map_id) {
@@ -102,7 +125,12 @@ int tagworld_map_is_train_tool(TagWorldMapId map_id) {
 }
 
 int tagworld_map_is_held_out_tool(TagWorldMapId map_id) {
-    return map_id >= TAGWORLD_MAP_TOOL_D && map_id <= TAGWORLD_MAP_TOOL_F;
+    return (map_id >= TAGWORLD_MAP_TOOL_D && map_id <= TAGWORLD_MAP_TOOL_F) ||
+           map_id == TAGWORLD_MAP_TOOL_D_ALIAS;
+}
+
+int tagworld_map_is_d_geometry_alias(TagWorldMapId map_id) {
+    return map_id == TAGWORLD_MAP_TOOL_D_ALIAS;
 }
 
 TagWorldMapId tagworld_generalization_train_map(uint32_t episode) {
@@ -128,6 +156,8 @@ const char *tagworld_generalization_map_letter(TagWorldMapId map_id) {
         return "E";
     case TAGWORLD_MAP_TOOL_F:
         return "F";
+    case TAGWORLD_MAP_TOOL_D_ALIAS:
+        return "D'";
     default:
         return "?";
     }
@@ -161,6 +191,9 @@ void tagworld_init_map_for_id(TagWorld *w, TagWorldMapId map_id, int grid) {
     case TAGWORLD_MAP_TOOL_F:
         tagworld_init_tool_f(w, grid);
         break;
+    case TAGWORLD_MAP_TOOL_D_ALIAS:
+        tagworld_init_tool_d_alias(w, grid);
+        break;
     case TAGWORLD_MAP_TOOL_A:
     default:
         tagworld_init_tool_a(w, grid);
@@ -191,11 +224,12 @@ void tagworld_reset_tool_spawns(TagWorld *w, TagWorldMapId map_id) {
         w->block.y = 3;
         break;
     case TAGWORLD_MAP_TOOL_D:
-        w->runner.x = 1;
+    case TAGWORLD_MAP_TOOL_D_ALIAS:
+        w->runner.x = 4;
         w->runner.y = 3;
-        w->seeker.x = 5;
+        w->seeker.x = 1;
         w->seeker.y = 3;
-        w->block.x = 2;
+        w->block.x = 3;
         w->block.y = 3;
         break;
     case TAGWORLD_MAP_TOOL_E:

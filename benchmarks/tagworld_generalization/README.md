@@ -1,10 +1,18 @@
 # v1.2 TagWorld Generalization
 
-**Status:** Repeat (RC harness)
-
 Supervised abstract tool-schema transfer: train on maps A/B/C with adapter-emitted chokepoint events; frozen eval on held-out D/E/F.
 
-Not final promote until held-out topology and invariance gaps are closed. See [gate.md](gate.md).
+## Supported claim
+
+Supervised abstract tool-schema transfer across maps via adapter events + frozen eval.
+
+## Not supported
+
+- Pure feedback acquisition
+- Zero-shot tool invention
+- Generalization beyond adapter-emitted chokepoint events
+
+See [gate.md](gate.md).
 
 ## CLI
 

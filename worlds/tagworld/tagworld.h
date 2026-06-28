@@ -131,6 +131,7 @@ typedef struct TagWorldEdgeIds {
     uint32_t chokepoint_to_push_chokepoint;
     uint32_t push_chokepoint_to_block_at_chokepoint;
     uint32_t path_blocked_by_tool_to_run_safe;
+    uint32_t chokepoint_to_wait;
 } TagWorldEdgeIds;
 
 typedef enum TagWorldOnlinePhase {
@@ -138,6 +139,39 @@ typedef enum TagWorldOnlinePhase {
     TAGWORLD_ONLINE_LEARN,
     TAGWORLD_ONLINE_EVAL
 } TagWorldOnlinePhase;
+
+#define TAGWORLD_MAX_DECISIONS 96
+#define TAGWORLD_MAX_DECISION_EDGES 6
+#define TAGWORLD_MAX_DECISION_CTX 6
+
+/* Episode-local credit record for pure-feedback learning. Captures, per decision,
+ * the active context, the selected action, and the policy edges that produced its
+ * score, so outcome feedback can strengthen/weaken exactly the edges actually used
+ * by selected actions in that episode (no oracle pair injection). */
+typedef struct TagWorldDecision {
+    uint32_t episode_id;
+    uint32_t decision_tick;
+    uint32_t context_nodes[TAGWORLD_MAX_DECISION_CTX];
+    uint32_t context_count;
+    uint32_t selected_action_node;
+    TagWorldAction selected_action;
+    uint32_t policy_edges[TAGWORLD_MAX_DECISION_EDGES];
+    uint32_t policy_edge_count;
+    int32_t action_score;
+    uint32_t valid_mask;
+    bool explored;
+    bool tie_zero_score;
+    bool led_to_block_at_chokepoint;
+    bool led_to_path_blocked_by_tool;
+} TagWorldDecision;
+
+typedef struct TagWorldCreditTrace {
+    uint32_t episode_id;
+    uint32_t decision_count;
+    TagWorldOutcome outcome;
+    uint32_t mutations_queued;
+    TagWorldDecision decisions[TAGWORLD_MAX_DECISIONS];
+} TagWorldCreditTrace;
 
 typedef struct TagWorldNerva {
     TagWorldEventIds ev;
@@ -149,6 +183,7 @@ typedef struct TagWorldNerva {
     uint32_t last_active_count;
     uint32_t last_expected_count;
     uint32_t last_surprise_count;
+    TagWorldCreditTrace credit;
 } TagWorldNerva;
 
 typedef struct TagWorldConfig {
@@ -214,6 +249,10 @@ typedef struct TagWorldMetrics {
     uint64_t total_events;
     uint64_t total_mutations_applied;
     uint64_t action_score_fallback_count;
+    uint64_t action_tie_zero_score_count;
+    uint64_t pure_feedback_credit_mutations;
+    uint64_t pure_feedback_strengthen_mutations;
+    uint64_t pure_feedback_weaken_mutations;
 } TagWorldMetrics;
 
 #define TAGWORLD_ACTION_SCORE_TRACE_MAX 12u
@@ -271,6 +310,7 @@ void tagworld_set_abstract_tool_policy(int enabled);
 void tagworld_set_pure_feedback(int enabled);
 uint64_t tagworld_debug_oracle_online_train_pair_rounds(void);
 void tagworld_debug_reset_oracle_counters(void);
+const TagWorldCreditTrace *tagworld_nerva_credit_trace(const TagWorldNerva *tn);
 void tagworld_set_online_phase(TagWorldOnlinePhase phase);
 void tagworld_restore_online_learned_policy(NervaEngine *e);
 void tagworld_nerva_emit_state_events(NervaEngine *e, TagWorldNerva *tn, TagWorld *w,

@@ -1,21 +1,54 @@
 # v1.2.1 Results
 
-**Status:** Repeat / Draft
+**Decision:** Repeat
 
-> v1.2.1 currently establishes the pure-feedback harness: oracle online `train_pair` chains are disabled and selected policy edges are traceable. It does not yet establish pure-feedback tool-schema acquisition.
+v1.2.1 now establishes the full pure-feedback credit trace:
+context -> selected action -> consequence -> outcome -> mutation.
+
+The mechanism fires through the mutation queue and oracle `train_pair` chains remain disabled.
+
+However, frozen eval on held-out pressure map G remains 0%. PUSH does not overtake WAIT because
+successful tool use requires a multi-decision chain, and random single-tick PUSH choices are often
+credited against eventual timeout. The next mechanism needed is delayed/eligibility-style credit
+over action sequences or intermediate consequence shaping.
 
 ## Still TBD (blocks promote)
 
-- push rises during online learning
-- frozen eval beats baseline on a nontrivial held-out map
+- push selection rises during online learning (currently flat; sparse-reward credit not converging)
+- frozen eval beats baseline on a nontrivial held-out map (G eval still 0% vs ~0.59-0.74 random)
 - ablation drops push/escape
-- full trace connects action credit to outcome mutation
+- (full credit trace now present — see below)
 
-## Harness (landed)
+## Credit trace wiring (landed)
 
-- `--pure-feedback` disables oracle `train_pair` chains in online tool acquisition
-- Policy edges contributing to the selected action record `NERVA_TRACE_USED_PATH` during learn phase
-- Dynamics pretrain (`tagworld_pretrain_abstract_dynamics`) unchanged — world structure observation only
+- `--pure-feedback` disables oracle `train_pair` chains in online tool acquisition.
+- Episode-local decision records (`TagWorldCreditTrace` / `TagWorldDecision`): per decision capture
+  `episode_id`, `decision_tick`, active context nodes, selected action node, contributing policy
+  edges, action score, valid mask, `explored`, `tie_zero_score`, and consequence flags
+  (`led_to_block_at_chokepoint`, `led_to_path_blocked_by_tool`).
+- Outcome credit through the mutation queue only: ESCAPED strengthens (`+ltp`), TIMEOUT/CAUGHT
+  weakens (`-ltd`) the policy edges actually used by the episode's selected actions. No oracle pairs.
+- Exploration: epsilon during learn (`online_explore_pct`); frozen eval uses epsilon=0, zero
+  mutations, learned scores only. `ACTION_TIE_ZERO_SCORE` is counted (and logged under
+  `--action-score-trace`) when every valid action scores zero.
+- New abstract policy edge `CHOKEPOINT_DETECTED -> ACTION_WAIT` lets feedback weaken WAIT in
+  chokepoint context (a scoring/feedback rule for the all-WAIT trap, not a policy override).
+- Dynamics pretrain (`tagworld_pretrain_abstract_dynamics`) unchanged — world structure
+  observation only.
+
+## Measured pure-feedback runs on G (oracle disabled)
+
+| seed | train escape | train strengthen / weaken muts | tie-zero | eval escape | eval random | eval push |
+|------|--------------|--------------------------------|----------|-------------|-------------|-----------|
+| 1    | 0.685        | 535 / 322                      | 404      | 0.000       | 0.590       | 0         |
+| 5    | 0.685        | 529 / 368                      | 462      | 0.000       | 0.740       | 0         |
+| 11   | 0.680        | 517 / 357                      | 462      | 0.000       | 0.690       | 0         |
+
+The credit loop runs (hundreds of strengthen/weaken mutations per run), but the learned frozen
+policy still never pushes. Diagnosis: under random-exploration credit, a PUSH chosen at a single
+tick rarely completes the full push -> block-at-chokepoint -> run -> escape chain, so push-context
+edges are weakened about as often as strengthened and never dominate WAIT at eval. This is the
+expected Repeat: the mechanism is honest and wired; convergence is the next (deferred) tuning step.
 
 ## Evaluation map note
 
@@ -55,6 +88,8 @@ learner with no acquired push behavior, so frozen eval loses to random. The gap
 1. Add held-out pressure map G. **done**
 2. Confirm oracle wins (push→run escape >= 95%). **done** (100%)
 3. Confirm random baseline is not saturated (20-80%). **done** (~0.62-0.72)
-4. Run pure-feedback learning. **done** (currently 0.0 — TBD)
-5. Inspect traces. **next**
-6. Only then tune feedback/credit. **deferred** (do not tune learning before the eval map is right)
+4. Run pure-feedback learning. **done** (eval 0.0 — credit wired, not converging)
+5. Inspect traces. **done** (decision records link context→action→consequence→outcome→mutation)
+6. Only then tune feedback/credit. **next / deferred** (e.g. eligibility traces over the full
+   decision chain, reward shaping on `led_to_block_at_chokepoint`, or annealed exploration —
+   none added yet to avoid biasing the honest baseline)

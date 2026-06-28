@@ -18,12 +18,14 @@ because its random baseline is 100%.
 
 ## Promote if
 
-- No oracle `train_pair` chains run on escape (`--pure-feedback`)
-- Oracle push→run escape >= 95% on the held-out pressure map
-- Random valid-action baseline is between 20% and 80% (must leave headroom)
-- Learned frozen eval >= random baseline + 20 pp
-- Ablation of learned tool/chokepoint edges drops push or escape
-- Trace shows credit from actual episode path: observed context → selected action → block state → outcome → mutation
+- No oracle `train_pair` chains run on escape (`--pure-feedback`) — **met**
+- Oracle push→run escape >= 95% on the held-out pressure map — **met (100%)**
+- Random valid-action baseline is between 20% and 80% (must leave headroom) — **met (~0.62-0.72)**
+- Trace shows credit from actual episode path: observed context → selected action → block state →
+  outcome → mutation — **met (episode-local decision records + outcome-driven weight deltas)**
+- Push selection rises during online learning — **NOT met (flat)**
+- Learned frozen eval >= random baseline + 20 pp — **NOT met (eval 0%)**
+- Ablation of learned tool/chokepoint edges drops push or escape — **NOT met (push already 0)**
 
 ## Held-out pressure map
 
@@ -40,6 +42,10 @@ obstructing the sole short corridor: random play frequently times out, the oracl
 
 - `test_tagworld_pure_feedback_no_oracle_train_pairs`
 - `test_tagworld_pure_feedback_records_action_traces`
+- `test_pure_feedback_escape_strengthens_selected_push_trace`
+- `test_pure_feedback_timeout_weakens_selected_wait_trace`
+- `test_pure_feedback_trace_links_context_action_outcome_mutation`
+- `test_pure_feedback_push_score_increases_after_successful_episode`
 - `test_tagworld_map_g_headroom` (oracle escapes, random baseline in [0.20, 0.80])
 - `test_tagworld_map_g_not_clone_of_a`
 

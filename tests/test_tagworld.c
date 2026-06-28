@@ -434,10 +434,12 @@ static void test_tagworld_online_action_edges_zero_after_pretrain(void) {
                 "path_open push edge zero after dynamics pretrain");
     expect_true(tagworld_nerva_edge_weight(&e, tn.edge.doorway_open_to_push_doorway) == 0u,
                 "doorway_open push edge zero after dynamics pretrain");
-    expect_true(tagworld_nerva_edge_weight(&e, tn.edge.path_blocked_to_run_safe) > 0u,
-                "path_blocked run edge positive after dynamics pretrain");
-    expect_true(tagworld_nerva_edge_weight(&e, tn.edge.push_doorway_to_block_at_doorway) == 0u,
-                "push doorway lead edge zero after dynamics pretrain");
+    expect_true(tagworld_nerva_edge_weight(&e, tn.edge.seeker_route_to_push_chokepoint) == 0u,
+                "seeker_route push edge zero after dynamics pretrain");
+    expect_true(tagworld_nerva_edge_weight(&e, tn.edge.path_blocked_by_tool_to_run_safe) > 0u,
+                "path_blocked_by_tool run edge positive after dynamics pretrain");
+    expect_true(tagworld_nerva_edge_weight(&e, tn.edge.push_chokepoint_to_block_at_chokepoint) == 0u,
+                "push chokepoint lead edge zero after dynamics pretrain");
     nerva_engine_free(&e);
 }
 
@@ -503,16 +505,17 @@ static void test_tagworld_post_push_selects_run_after_dynamics_pretrain(void) {
 
     TagWorld w;
     tagworld_reset_for_config(&w, &cfg, 0u);
-    for (uint32_t t = 0; t < 16u && !tagworld_is_block_at_doorway(&w); ++t) {
+    for (uint32_t t = 0; t < 16u && !tagworld_is_block_at_chokepoint(&w); ++t) {
         tagworld_apply_action(&w, TAG_ACTION_PUSH_BLOCK_TO_DOORWAY);
         tagworld_step_seeker(&w);
         w.tick = t;
     }
-    expect_true(tagworld_is_block_at_doorway(&w), "post-push block at doorway");
+    expect_true(tagworld_is_block_at_chokepoint(&w), "post-push block at chokepoint");
 
     nerva_debug_clear_fire_log(&e);
-    tagworld_nerva_emit_actual(&e, &tn, tn.ev.block_at_doorway);
-    tagworld_nerva_emit_actual(&e, &tn, tn.ev.path_blocked);
+    tagworld_set_abstract_tool_policy(1);
+    tagworld_nerva_emit_actual(&e, &tn, tn.ev.block_at_chokepoint);
+    tagworld_nerva_emit_actual(&e, &tn, tn.ev.path_blocked_by_tool);
     TagWorldAction action =
         tagworld_nerva_select_action(&e, &tn, &w, tagworld_valid_action_mask(&w));
     expect_true(action == TAG_ACTION_RUN_TO_SAFE,
@@ -533,7 +536,8 @@ static void test_tagworld_action_score_trace_lists_contributors(void) {
 
     TagWorld w;
     tagworld_reset_for_config(&w, &cfg, 0u);
-    tagworld_nerva_emit_actual(&e, &tn, tn.ev.path_blocked);
+    tagworld_set_abstract_tool_policy(1);
+    tagworld_nerva_emit_actual(&e, &tn, tn.ev.path_blocked_by_tool);
 
     TagWorldActionScoreTrace trace;
     memset(&trace, 0, sizeof(trace));
@@ -559,15 +563,18 @@ static void test_tagworld_action_score_stable_after_10k_train_pairs(void) {
     tagworld_pretrain_for_config(&e, &tn, &cfg);
 
     for (uint32_t i = 0; i < 10000u; ++i) {
-        tagworld_nerva_train_pair(&e, &tn, tn.ev.path_open, tn.edge.path_open_to_push_doorway,
+        tagworld_nerva_train_pair(&e, &tn, tn.ev.seeker_route_uses_chokepoint,
+                                  tn.edge.seeker_route_to_push_chokepoint,
                                   tn.ev.action_push_block_to_doorway, 1);
-        tagworld_nerva_train_pair(&e, &tn, tn.ev.path_blocked, tn.edge.path_blocked_to_run_safe,
+        tagworld_nerva_train_pair(&e, &tn, tn.ev.path_blocked_by_tool,
+                                  tn.edge.path_blocked_by_tool_to_run_safe,
                                   tn.ev.action_run_to_safe, 1);
     }
 
     TagWorld w;
     tagworld_reset_for_config(&w, &cfg, 0u);
-    tagworld_nerva_emit_actual(&e, &tn, tn.ev.path_blocked);
+    tagworld_set_abstract_tool_policy(1);
+    tagworld_nerva_emit_actual(&e, &tn, tn.ev.path_blocked_by_tool);
 
     TagWorldActionScoreTrace trace;
     memset(&trace, 0, sizeof(trace));
@@ -674,15 +681,20 @@ static void test_tagworld_online_frozen_ablation_reduces_push(void) {
     expect_true(tagworld_run_frozen_result(&e, &cfg, &result) == 0, "frozen ablation full run");
     tagworld_nerva_init(&e, &tn);
 
-    uint32_t push_edge_before = tagworld_nerva_edge_weight(&e, tn.edge.path_open_to_push_doorway);
-    expect_true(push_edge_before > 0u, "learned push edge weight positive before ablation");
+    uint32_t push_edge_before =
+        tagworld_nerva_edge_weight(&e, tn.edge.seeker_route_to_push_chokepoint);
+    if (push_edge_before == 0u) {
+        push_edge_before =
+            tagworld_nerva_edge_weight(&e, tn.edge.block_can_reach_to_push_chokepoint);
+    }
+    expect_true(push_edge_before > 0u, "learned chokepoint push edge weight positive before ablation");
 
     uint64_t push_before = result.eval.action_push_doorway_count;
     double escape_before = result.eval.escape_rate;
 
     tagworld_ablate_learned_push_edges(&e, &tn);
-    expect_true(tagworld_nerva_edge_weight(&e, tn.edge.path_open_to_push_doorway) == 0u,
-                "push edge zero after ablation");
+    expect_true(tagworld_nerva_edge_weight(&e, tn.edge.seeker_route_to_push_chokepoint) == 0u,
+                "seeker_route push edge zero after ablation");
 
     TagWorldMetrics ablated;
     expect_true(tagworld_run_frozen_eval_only(&e, &tn, &cfg, &ablated) == 0, "ablated eval run");
@@ -690,6 +702,89 @@ static void test_tagworld_online_frozen_ablation_reduces_push(void) {
                     ablated.escape_rate < escape_before,
                 "ablation reduces push usage or escape");
     nerva_engine_free(&e);
+}
+
+static TagWorldConfig tagworld_generalization_test_config(void) {
+    TagWorldConfig cfg = tagworld_tool_test_config();
+    cfg.mode = TAGWORLD_MODE_ACTION;
+    cfg.fast = true;
+    cfg.tool_generalization = true;
+    cfg.generalization_eval_map = TAGWORLD_MAP_TOOL_D;
+    cfg.online_learn_episodes = 200u;
+    cfg.online_eval_episodes = 100u;
+    cfg.online_explore_pct = 15u;
+    cfg.run_baseline = true;
+    return cfg;
+}
+
+static void test_tagworld_generalization_train_push_increases(void) {
+    TagWorldConfig cfg = tagworld_generalization_test_config();
+    cfg.seed = 1u;
+
+    NervaEngine e;
+    expect_true(nerva_engine_init(&e, nerva_config_test()) == 0, "gen train init");
+    TagWorldGeneralizationResult result;
+    expect_true(tagworld_run_generalization_result(&e, &cfg, &result) == 0, "gen train run");
+    expect_true(result.train.episodes_with_push_last_window >
+                    result.train.episodes_with_push_first_window,
+                "generalization train push selection rises");
+    expect_true(result.train.escaped_last_window > result.train.escaped_first_window,
+                "generalization train escape improves");
+    nerva_engine_free(&e);
+}
+
+static void test_tagworld_generalization_eval_beats_random_on_D(void) {
+    static const uint32_t seeds[] = {1u, 5u, 11u};
+    TagWorldConfig cfg = tagworld_generalization_test_config();
+
+    for (size_t i = 0; i < sizeof(seeds) / sizeof(seeds[0]); ++i) {
+        cfg.seed = seeds[i];
+        NervaEngine e;
+        expect_true(nerva_engine_init(&e, nerva_config_test()) == 0, "gen eval seed init");
+        TagWorldGeneralizationResult result;
+        expect_true(tagworld_run_generalization_result(&e, &cfg, &result) == 0, "gen eval seed run");
+        expect_true(result.eval_map == TAGWORLD_MAP_TOOL_D, "default held-out eval is map D");
+        expect_true(result.eval.escape_rate >= result.eval.baseline_escape_rate + 0.20,
+                    "held-out map D beats random by >=20pp");
+        expect_true(result.eval.action_push_doorway_count > 0u, "held-out eval uses push action");
+        nerva_engine_free(&e);
+    }
+}
+
+static void test_tagworld_generalization_eval_no_mutations(void) {
+    TagWorldConfig cfg = tagworld_generalization_test_config();
+    cfg.seed = 1u;
+
+    NervaEngine e;
+    expect_true(nerva_engine_init(&e, nerva_config_test()) == 0, "gen no-mut init");
+    TagWorldGeneralizationResult result;
+    expect_true(tagworld_run_generalization_result(&e, &cfg, &result) == 0, "gen no-mut run");
+    expect_true(result.eval.avg_mutations_per_episode == 0.0,
+                "generalization frozen eval applies zero mutations per episode");
+    nerva_engine_free(&e);
+}
+
+static void test_tagworld_held_out_maps_push_then_run_wins(void) {
+    TagWorldConfig cfg = tagworld_tool_test_config();
+    struct {
+        TagWorldMapId map_id;
+        const char *label;
+    } cases[] = {
+        {TAGWORLD_MAP_TOOL_D, "D"},
+        {TAGWORLD_MAP_TOOL_E, "E"},
+        {TAGWORLD_MAP_TOOL_F, "F"},
+    };
+
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+        cfg.map_id = cases[i].map_id;
+        TagWorld w;
+        tagworld_reset_for_config(&w, &cfg, 0u);
+        int outcome =
+            tagworld_simulate_with_policy(&w, tagworld_push_then_run_policy, NULL, cfg.max_ticks);
+        char msg[64];
+        snprintf(msg, sizeof(msg), "push then run escapes on held-out map %s", cases[i].label);
+        expect_true(outcome == TAGWORLD_OUTCOME_ESCAPED, msg);
+    }
 }
 
 int test_tagworld_run(void) {
@@ -722,6 +817,10 @@ int test_tagworld_run(void) {
     test_tagworld_online_frozen_eval_beats_random();
     test_tagworld_online_frozen_eval_no_mutations();
     test_tagworld_online_frozen_ablation_reduces_push();
+    test_tagworld_generalization_train_push_increases();
+    test_tagworld_generalization_eval_beats_random_on_D();
+    test_tagworld_generalization_eval_no_mutations();
+    test_tagworld_held_out_maps_push_then_run_wins();
     test_tagworld_viz_no_state_change();
     test_tagworld_replay_deterministic();
     return g_failures;

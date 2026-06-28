@@ -26,6 +26,8 @@ static void print_usage(const char *prog) {
     printf("  --baseline          track random action baseline (action mode)\n");
     printf("  --online-tool       outcome-driven tool acquisition (no action pretrain)\n");
     printf("  --online-frozen     learn online then frozen eval (200+100 episodes)\n");
+    printf("  --generalization    train maps A/B/C, frozen eval on held-out map\n");
+    printf("  --eval-map MAP      held-out eval map D|E|F (default D)\n");
     printf("  --learn-episodes N  online learn phase length (default 200)\n");
     printf("  --eval-episodes N   frozen eval phase length (default 100)\n");
     printf("  --action-score-trace  log action score fallback traces to stderr\n");
@@ -58,6 +60,30 @@ static int parse_map(const char *s, TagWorldMapId *map_id) {
     }
     if (strcmp(s, "tool") == 0 || strcmp(s, "tool_pressure") == 0) {
         *map_id = TAGWORLD_MAP_TOOL_PRESSURE;
+        return 0;
+    }
+    if (strcmp(s, "tool_a") == 0 || strcmp(s, "A") == 0) {
+        *map_id = TAGWORLD_MAP_TOOL_A;
+        return 0;
+    }
+    if (strcmp(s, "tool_b") == 0 || strcmp(s, "B") == 0) {
+        *map_id = TAGWORLD_MAP_TOOL_B;
+        return 0;
+    }
+    if (strcmp(s, "tool_c") == 0 || strcmp(s, "C") == 0) {
+        *map_id = TAGWORLD_MAP_TOOL_C;
+        return 0;
+    }
+    if (strcmp(s, "tool_d") == 0 || strcmp(s, "D") == 0) {
+        *map_id = TAGWORLD_MAP_TOOL_D;
+        return 0;
+    }
+    if (strcmp(s, "tool_e") == 0 || strcmp(s, "E") == 0) {
+        *map_id = TAGWORLD_MAP_TOOL_E;
+        return 0;
+    }
+    if (strcmp(s, "tool_f") == 0 || strcmp(s, "F") == 0) {
+        *map_id = TAGWORLD_MAP_TOOL_F;
         return 0;
     }
     return -1;
@@ -105,6 +131,13 @@ int main(int argc, char **argv) {
             cfg.online_tool_acquisition = true;
         } else if (strcmp(argv[i], "--online-frozen") == 0) {
             cfg.online_frozen_eval = true;
+        } else if (strcmp(argv[i], "--generalization") == 0) {
+            cfg.tool_generalization = true;
+        } else if (strcmp(argv[i], "--eval-map") == 0 && i + 1 < argc) {
+            if (parse_map(argv[++i], &cfg.generalization_eval_map) != 0) {
+                fprintf(stderr, "Unknown eval map\n");
+                return 1;
+            }
         } else if (strcmp(argv[i], "--learn-episodes") == 0 && i + 1 < argc) {
             cfg.online_learn_episodes = (uint32_t)strtoul(argv[++i], NULL, 10);
         } else if (strcmp(argv[i], "--eval-episodes") == 0 && i + 1 < argc) {
@@ -139,7 +172,14 @@ int main(int argc, char **argv) {
     }
 
     TagWorldMetrics metrics;
-    if (cfg.online_frozen_eval) {
+    if (cfg.tool_generalization) {
+        TagWorldGeneralizationResult gen;
+        if (tagworld_run_generalization_result(&e, &cfg, &gen) != 0) {
+            nerva_engine_free(&e);
+            return 1;
+        }
+        tagworld_print_generalization_summary(&gen, stdout);
+    } else if (cfg.online_frozen_eval) {
         TagWorldFrozenResult frozen;
         if (tagworld_run_frozen_result(&e, &cfg, &frozen) != 0) {
             nerva_engine_free(&e);

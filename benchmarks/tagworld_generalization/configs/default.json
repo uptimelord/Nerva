@@ -1,0 +1,11 @@
+{
+  "generalization": true,
+  "mode": "action",
+  "eval_map": "D",
+  "seed": 1,
+  "fast": true,
+  "baseline": true,
+  "learn_episodes": 200,
+  "eval_episodes": 100,
+  "online_explore_pct": 15
+}

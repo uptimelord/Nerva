@@ -44,7 +44,8 @@ $TestSrc = @(
 )
 $TagworldSrc = @(
     "worlds/tagworld/tagworld.c",
-    "worlds/tagworld/tagworld_viz.c"
+    "worlds/tagworld/tagworld_viz.c",
+    "worlds/tagworld/maps/tagworld_maps.c"
 )
 
 $build = Join-Path $PSScriptRoot "build"

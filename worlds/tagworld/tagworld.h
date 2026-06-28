@@ -21,7 +21,13 @@
 
 typedef enum TagWorldMapId {
     TAGWORLD_MAP_CORRIDOR = 0,
-    TAGWORLD_MAP_TOOL_PRESSURE = 1
+    TAGWORLD_MAP_TOOL_A = 1,
+    TAGWORLD_MAP_TOOL_PRESSURE = TAGWORLD_MAP_TOOL_A,
+    TAGWORLD_MAP_TOOL_B = 2,
+    TAGWORLD_MAP_TOOL_C = 3,
+    TAGWORLD_MAP_TOOL_D = 4,
+    TAGWORLD_MAP_TOOL_E = 5,
+    TAGWORLD_MAP_TOOL_F = 6
 } TagWorldMapId;
 
 typedef enum TagWorldCell {
@@ -97,6 +103,11 @@ typedef struct TagWorldEventIds {
     uint32_t action_run_to_safe;
     uint32_t action_push_block;
     uint32_t action_push_block_to_doorway;
+    uint32_t chokepoint_detected;
+    uint32_t seeker_route_uses_chokepoint;
+    uint32_t block_can_reach_chokepoint;
+    uint32_t block_at_chokepoint;
+    uint32_t path_blocked_by_tool;
 } TagWorldEventIds;
 
 typedef struct TagWorldEdgeIds {
@@ -110,6 +121,14 @@ typedef struct TagWorldEdgeIds {
     uint32_t path_blocked_to_run_safe;
     uint32_t path_open_to_wait;
     uint32_t path_open_to_push_doorway;
+    uint32_t block_at_chokepoint_to_path_blocked_by_tool;
+    uint32_t seeker_route_to_caught;
+    uint32_t path_blocked_by_tool_to_escaped;
+    uint32_t seeker_route_to_push_chokepoint;
+    uint32_t block_can_reach_to_push_chokepoint;
+    uint32_t chokepoint_to_push_chokepoint;
+    uint32_t push_chokepoint_to_block_at_chokepoint;
+    uint32_t path_blocked_by_tool_to_run_safe;
 } TagWorldEdgeIds;
 
 typedef enum TagWorldOnlinePhase {
@@ -153,6 +172,8 @@ typedef struct TagWorldConfig {
     uint32_t online_explore_pct;
     uint32_t online_anneal_episodes;
     bool action_score_trace;
+    bool tool_generalization;
+    TagWorldMapId generalization_eval_map;
     TagWorldMapId map_id;
 } TagWorldConfig;
 
@@ -215,6 +236,12 @@ typedef struct TagWorldFrozenResult {
     TagWorldMetrics eval;
 } TagWorldFrozenResult;
 
+typedef struct TagWorldGeneralizationResult {
+    TagWorldMetrics train;
+    TagWorldMetrics eval;
+    TagWorldMapId eval_map;
+} TagWorldGeneralizationResult;
+
 typedef struct TagWorldFrame {
     uint32_t episode;
     uint32_t tick;
@@ -237,6 +264,7 @@ typedef struct TagWorldFrame {
 } TagWorldFrame;
 
 void tagworld_config_defaults(TagWorldConfig *cfg);
+void tagworld_set_abstract_tool_policy(int enabled);
 void tagworld_init_map(TagWorld *w, int grid);
 void tagworld_init_map_tool_pressure(TagWorld *w, int grid);
 void tagworld_reset(TagWorld *w, uint32_t seed, uint32_t episode);
@@ -245,6 +273,9 @@ const char *tagworld_map_name(TagWorldMapId map_id);
 int tagworld_seeker_can_reach_runner(const TagWorld *w);
 int tagworld_is_block_at_doorway(const TagWorld *w);
 int tagworld_is_doorway_open(const TagWorld *w);
+int tagworld_is_block_at_chokepoint(const TagWorld *w);
+int tagworld_block_can_reach_chokepoint(const TagWorld *w);
+int tagworld_seeker_route_uses_chokepoint(const TagWorld *w);
 int tagworld_manhattan(TagWorldPos a, TagWorldPos b);
 void tagworld_step_seeker(TagWorld *w);
 uint32_t tagworld_valid_action_mask(const TagWorld *w);
@@ -295,6 +326,9 @@ int tagworld_nerva_prediction_mismatch_pair(NervaEngine *e, TagWorldNerva *tn, u
 
 int tagworld_run(NervaEngine *e, const TagWorldConfig *cfg, TagWorldMetrics *out);
 int tagworld_run_frozen_result(NervaEngine *e, const TagWorldConfig *cfg, TagWorldFrozenResult *out);
+int tagworld_run_generalization_result(NervaEngine *e, const TagWorldConfig *cfg,
+                                       TagWorldGeneralizationResult *out);
+void tagworld_print_generalization_summary(const TagWorldGeneralizationResult *r, FILE *out);
 int tagworld_run_episode(NervaEngine *e, TagWorldNerva *tn, TagWorld *w,
                          const TagWorldConfig *cfg, TagWorldMetrics *m, FILE *replay_out);
 int tagworld_replay_file(const char *path, bool viz);

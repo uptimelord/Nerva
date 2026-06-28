@@ -1,0 +1,48 @@
+{
+  "experiment": "v1.1.3_tagworld_online_frozen_eval_promote",
+  "decision": "promote",
+  "tag": "v1.1.3",
+  "date": "2026-06-28",
+  "tests_passed": 110,
+  "map": "tool_pressure",
+  "policy": "online_learn_then_frozen_greedy_eval",
+  "learn_episodes": 200,
+  "eval_episodes": 100,
+  "online_explore_pct": 15,
+  "frozen_seed1": {
+    "learn_escape_rate": 0.86,
+    "learn_episodes_with_push_first_window": 14,
+    "learn_episodes_with_push_last_window": 18,
+    "learn_escaped_first_window": 5,
+    "learn_escaped_last_window": 18,
+    "eval_escape_rate": 1.0,
+    "eval_baseline_escape_rate": 0.59,
+    "eval_margin_pp": 41.0,
+    "eval_avg_mutations_per_episode": 0.0,
+    "eval_action_push_doorway_count": 100
+  },
+  "frozen_seed5": {
+    "learn_escape_rate": 0.785,
+    "learn_episodes_with_push_first_window": 17,
+    "learn_episodes_with_push_last_window": 19,
+    "learn_escaped_first_window": 2,
+    "learn_escaped_last_window": 18,
+    "eval_escape_rate": 1.0,
+    "eval_baseline_escape_rate": 0.74,
+    "eval_margin_pp": 26.0,
+    "eval_avg_mutations_per_episode": 0.0,
+    "eval_action_push_doorway_count": 100
+  },
+  "frozen_seed11": {
+    "learn_escape_rate": 0.84,
+    "learn_episodes_with_push_first_window": 15,
+    "learn_episodes_with_push_last_window": 19,
+    "learn_escaped_first_window": 3,
+    "learn_escaped_last_window": 14,
+    "eval_escape_rate": 1.0,
+    "eval_baseline_escape_rate": 0.69,
+    "eval_margin_pp": 31.0,
+    "eval_avg_mutations_per_episode": 0.0,
+    "eval_action_push_doorway_count": 100
+  }
+}

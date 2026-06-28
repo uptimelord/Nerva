@@ -25,6 +25,9 @@ static void print_usage(const char *prog) {
     printf("  --viz               enable terminal ASCII visualizer\n");
     printf("  --baseline          track random action baseline (action mode)\n");
     printf("  --online-tool       outcome-driven tool acquisition (no action pretrain)\n");
+    printf("  --online-frozen     learn online then frozen eval (200+100 episodes)\n");
+    printf("  --learn-episodes N  online learn phase length (default 200)\n");
+    printf("  --eval-episodes N   frozen eval phase length (default 100)\n");
     printf("  --replay PATH       replay log (no learning)\n");
     printf("  --write-replay PATH write JSONL replay log\n");
     printf("  --snapshot-in PATH  load graph snapshot\n");
@@ -99,6 +102,12 @@ int main(int argc, char **argv) {
             cfg.run_baseline = true;
         } else if (strcmp(argv[i], "--online-tool") == 0) {
             cfg.online_tool_acquisition = true;
+        } else if (strcmp(argv[i], "--online-frozen") == 0) {
+            cfg.online_frozen_eval = true;
+        } else if (strcmp(argv[i], "--learn-episodes") == 0 && i + 1 < argc) {
+            cfg.online_learn_episodes = (uint32_t)strtoul(argv[++i], NULL, 10);
+        } else if (strcmp(argv[i], "--eval-episodes") == 0 && i + 1 < argc) {
+            cfg.online_eval_episodes = (uint32_t)strtoul(argv[++i], NULL, 10);
         } else if (strcmp(argv[i], "--replay") == 0 && i + 1 < argc) {
             cfg.replay = true;
             cfg.replay_path = argv[++i];
@@ -127,12 +136,20 @@ int main(int argc, char **argv) {
     }
 
     TagWorldMetrics metrics;
-    if (tagworld_run(&e, &cfg, &metrics) != 0) {
-        nerva_engine_free(&e);
-        return 1;
+    if (cfg.online_frozen_eval) {
+        TagWorldFrozenResult frozen;
+        if (tagworld_run_frozen_result(&e, &cfg, &frozen) != 0) {
+            nerva_engine_free(&e);
+            return 1;
+        }
+        tagworld_print_frozen_summary(&frozen, stdout);
+    } else {
+        if (tagworld_run(&e, &cfg, &metrics) != 0) {
+            nerva_engine_free(&e);
+            return 1;
+        }
+        tagworld_print_summary(&metrics, stdout);
     }
-
-    tagworld_print_summary(&metrics, stdout);
     nerva_engine_free(&e);
     return 0;
 }

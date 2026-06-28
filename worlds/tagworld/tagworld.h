@@ -112,6 +112,12 @@ typedef struct TagWorldEdgeIds {
     uint32_t path_open_to_push_doorway;
 } TagWorldEdgeIds;
 
+typedef enum TagWorldOnlinePhase {
+    TAGWORLD_ONLINE_NONE = 0,
+    TAGWORLD_ONLINE_LEARN,
+    TAGWORLD_ONLINE_EVAL
+} TagWorldOnlinePhase;
+
 typedef struct TagWorldNerva {
     TagWorldEventIds ev;
     TagWorldEdgeIds edge;
@@ -141,6 +147,11 @@ typedef struct TagWorldConfig {
     bool run_baseline;
     bool skip_pretrain;
     bool online_tool_acquisition;
+    bool online_frozen_eval;
+    uint32_t online_learn_episodes;
+    uint32_t online_eval_episodes;
+    uint32_t online_explore_pct;
+    uint32_t online_anneal_episodes;
     TagWorldMapId map_id;
 } TagWorldConfig;
 
@@ -178,6 +189,11 @@ typedef struct TagWorldMetrics {
     uint64_t total_events;
     uint64_t total_mutations_applied;
 } TagWorldMetrics;
+
+typedef struct TagWorldFrozenResult {
+    TagWorldMetrics learn;
+    TagWorldMetrics eval;
+} TagWorldFrozenResult;
 
 typedef struct TagWorldFrame {
     uint32_t episode;
@@ -242,6 +258,10 @@ void tagworld_nerva_episode_feedback(NervaEngine *e, TagWorldNerva *tn, TagWorld
                                      bool online_tool_acquisition, TagWorldMetrics *m,
                                      uint64_t *mut_applied_before);
 void tagworld_pretrain_for_config(NervaEngine *e, TagWorldNerva *tn, const TagWorldConfig *cfg);
+void tagworld_ablate_learned_push_edges(NervaEngine *e, TagWorldNerva *tn);
+TagWorldOnlinePhase tagworld_online_phase(void);
+int tagworld_run_frozen_eval_only(NervaEngine *e, TagWorldNerva *tn, const TagWorldConfig *cfg,
+                                  TagWorldMetrics *out);
 uint32_t tagworld_nerva_pending_expectation_target(const NervaEngine *e);
 int tagworld_nerva_prediction_confirm_pair(NervaEngine *e, TagWorldNerva *tn, uint32_t *confirm_out,
                                            uint32_t *miss_out, uint64_t *mut_applied_out);
@@ -249,6 +269,7 @@ int tagworld_nerva_prediction_mismatch_pair(NervaEngine *e, TagWorldNerva *tn, u
                                             uint32_t *miss_out);
 
 int tagworld_run(NervaEngine *e, const TagWorldConfig *cfg, TagWorldMetrics *out);
+int tagworld_run_frozen_result(NervaEngine *e, const TagWorldConfig *cfg, TagWorldFrozenResult *out);
 int tagworld_run_episode(NervaEngine *e, TagWorldNerva *tn, TagWorld *w,
                          const TagWorldConfig *cfg, TagWorldMetrics *m, FILE *replay_out);
 int tagworld_replay_file(const char *path, bool viz);
@@ -256,6 +277,7 @@ int tagworld_replay_file(const char *path, bool viz);
 void tagworld_build_frame(const TagWorld *w, const TagWorldNerva *tn, const NervaEngine *e,
                           TagWorldFrame *frame);
 void tagworld_print_summary(const TagWorldMetrics *m, FILE *out);
+void tagworld_print_frozen_summary(const TagWorldFrozenResult *r, FILE *out);
 int tagworld_parse_replay_line(const char *line, TagWorldFrame *frame);
 
 const char *tagworld_action_name(TagWorldAction action);

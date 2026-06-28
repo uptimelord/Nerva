@@ -434,8 +434,8 @@ static void test_tagworld_online_action_edges_zero_after_pretrain(void) {
                 "path_open push edge zero after dynamics pretrain");
     expect_true(tagworld_nerva_edge_weight(&e, tn.edge.doorway_open_to_push_doorway) == 0u,
                 "doorway_open push edge zero after dynamics pretrain");
-    expect_true(tagworld_nerva_edge_weight(&e, tn.edge.path_blocked_to_run_safe) == 0u,
-                "path_blocked run edge zero after dynamics pretrain");
+    expect_true(tagworld_nerva_edge_weight(&e, tn.edge.path_blocked_to_run_safe) > 0u,
+                "path_blocked run edge positive after dynamics pretrain");
     expect_true(tagworld_nerva_edge_weight(&e, tn.edge.push_doorway_to_block_at_doorway) == 0u,
                 "push doorway lead edge zero after dynamics pretrain");
     nerva_engine_free(&e);
@@ -479,6 +479,126 @@ static void test_tagworld_online_beats_random_baseline(void) {
     }
 }
 
+static TagWorldConfig tagworld_online_frozen_test_config(void) {
+    TagWorldConfig cfg = tagworld_tool_test_config();
+    cfg.mode = TAGWORLD_MODE_ACTION;
+    cfg.fast = true;
+    cfg.online_frozen_eval = true;
+    cfg.online_learn_episodes = 200u;
+    cfg.online_eval_episodes = 100u;
+    cfg.online_explore_pct = 15u;
+    return cfg;
+}
+
+static void test_tagworld_post_push_selects_run_after_dynamics_pretrain(void) {
+    TagWorldConfig cfg = tagworld_online_frozen_test_config();
+    cfg.episodes = 0u;
+    cfg.seed = 1u;
+
+    NervaEngine e;
+    expect_true(nerva_engine_init(&e, nerva_config_test()) == 0, "post-push select init");
+    TagWorldNerva tn;
+    tagworld_nerva_init(&e, &tn);
+    tagworld_pretrain_for_config(&e, &tn, &cfg);
+
+    TagWorld w;
+    tagworld_reset_for_config(&w, &cfg, 0u);
+    for (uint32_t t = 0; t < 16u && !tagworld_is_block_at_doorway(&w); ++t) {
+        tagworld_apply_action(&w, TAG_ACTION_PUSH_BLOCK_TO_DOORWAY);
+        tagworld_step_seeker(&w);
+        w.tick = t;
+    }
+    expect_true(tagworld_is_block_at_doorway(&w), "post-push block at doorway");
+
+    nerva_debug_clear_fire_log(&e);
+    tagworld_nerva_emit_actual(&e, &tn, tn.ev.block_at_doorway);
+    tagworld_nerva_emit_actual(&e, &tn, tn.ev.path_blocked);
+    TagWorldAction action =
+        tagworld_nerva_select_action(&e, &tn, &w, tagworld_valid_action_mask(&w));
+    expect_true(action == TAG_ACTION_RUN_TO_SAFE,
+                "dynamics pretrain selects run after push when path blocked");
+    nerva_engine_free(&e);
+}
+
+static void test_tagworld_online_frozen_learn_push_increases(void) {
+    TagWorldConfig cfg = tagworld_online_frozen_test_config();
+    cfg.seed = 1u;
+
+    NervaEngine e;
+    expect_true(nerva_engine_init(&e, nerva_config_test()) == 0, "frozen learn init");
+    TagWorldFrozenResult result;
+    expect_true(tagworld_run_frozen_result(&e, &cfg, &result) == 0, "frozen learn run");
+    expect_true(result.learn.episodes_with_push_last_window >
+                    result.learn.episodes_with_push_first_window,
+                "frozen learn push selection rises");
+    expect_true(result.learn.escaped_last_window > result.learn.escaped_first_window,
+                "frozen learn escape improves");
+    nerva_engine_free(&e);
+}
+
+static void test_tagworld_online_frozen_eval_beats_random(void) {
+    static const uint32_t seeds[] = {1u, 5u, 11u};
+    TagWorldConfig cfg = tagworld_online_frozen_test_config();
+
+    for (size_t i = 0; i < sizeof(seeds) / sizeof(seeds[0]); ++i) {
+        cfg.seed = seeds[i];
+        NervaEngine e;
+        expect_true(nerva_engine_init(&e, nerva_config_test()) == 0, "frozen eval seed init");
+        TagWorldFrozenResult result;
+        expect_true(tagworld_run_frozen_result(&e, &cfg, &result) == 0, "frozen eval seed run");
+        const TagWorldMetrics *eval = &result.eval;
+        TagWorldConfig baseline_cfg = cfg;
+        baseline_cfg.episodes = cfg.online_eval_episodes;
+        double random_rate = tagworld_baseline_random_escape_rate(&baseline_cfg, baseline_cfg.episodes);
+        expect_true(eval->escape_rate >= random_rate + 0.20,
+                    "frozen eval beats random by >=20pp");
+        expect_true(eval->action_push_doorway_count > 0u, "frozen eval uses push doorway");
+        nerva_engine_free(&e);
+    }
+}
+
+static void test_tagworld_online_frozen_eval_no_mutations(void) {
+    TagWorldConfig cfg = tagworld_online_frozen_test_config();
+    cfg.seed = 1u;
+
+    NervaEngine e;
+    expect_true(nerva_engine_init(&e, nerva_config_test()) == 0, "frozen no-mut init");
+    TagWorldFrozenResult result;
+    expect_true(tagworld_run_frozen_result(&e, &cfg, &result) == 0, "frozen no-mut run");
+    expect_true(result.eval.avg_mutations_per_episode == 0.0,
+                "frozen eval applies zero mutations per episode");
+    nerva_engine_free(&e);
+}
+
+static void test_tagworld_online_frozen_ablation_reduces_push(void) {
+    TagWorldConfig cfg = tagworld_online_frozen_test_config();
+    cfg.seed = 1u;
+
+    NervaEngine e;
+    expect_true(nerva_engine_init(&e, nerva_config_test()) == 0, "frozen ablation init");
+    TagWorldNerva tn;
+    TagWorldFrozenResult result;
+    expect_true(tagworld_run_frozen_result(&e, &cfg, &result) == 0, "frozen ablation full run");
+    tagworld_nerva_init(&e, &tn);
+
+    uint32_t push_edge_before = tagworld_nerva_edge_weight(&e, tn.edge.path_open_to_push_doorway);
+    expect_true(push_edge_before > 0u, "learned push edge weight positive before ablation");
+
+    uint64_t push_before = result.eval.action_push_doorway_count;
+    double escape_before = result.eval.escape_rate;
+
+    tagworld_ablate_learned_push_edges(&e, &tn);
+    expect_true(tagworld_nerva_edge_weight(&e, tn.edge.path_open_to_push_doorway) == 0u,
+                "push edge zero after ablation");
+
+    TagWorldMetrics ablated;
+    expect_true(tagworld_run_frozen_eval_only(&e, &tn, &cfg, &ablated) == 0, "ablated eval run");
+    expect_true(ablated.action_push_doorway_count < push_before ||
+                    ablated.escape_rate < escape_before,
+                "ablation reduces push usage or escape");
+    nerva_engine_free(&e);
+}
+
 int test_tagworld_run(void) {
     g_failures = 0;
     test_tagworld_deterministic_reset();
@@ -498,8 +618,13 @@ int test_tagworld_run(void) {
     test_tagworld_action_selects_push_when_required();
     test_tagworld_tool_action_beats_random_baseline();
     test_tagworld_online_action_edges_zero_after_pretrain();
+    test_tagworld_post_push_selects_run_after_dynamics_pretrain();
     test_tagworld_online_push_increases_over_episodes();
     test_tagworld_online_beats_random_baseline();
+    test_tagworld_online_frozen_learn_push_increases();
+    test_tagworld_online_frozen_eval_beats_random();
+    test_tagworld_online_frozen_eval_no_mutations();
+    test_tagworld_online_frozen_ablation_reduces_push();
     test_tagworld_viz_no_state_change();
     test_tagworld_replay_deterministic();
     return g_failures;

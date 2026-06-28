@@ -1,0 +1,16 @@
+{
+  "map": "tool",
+  "mode": "action",
+  "online_frozen": true,
+  "grid": 7,
+  "max_ticks": 64,
+  "online_learn_episodes": 200,
+  "online_eval_episodes": 100,
+  "online_explore_pct": 15,
+  "seeds": [1, 5, 11],
+  "gate": {
+    "min_eval_escape_margin_over_random": 0.20,
+    "learn_window_episodes": 20,
+    "eval_mutations_per_episode": 0
+  }
+}

@@ -1221,9 +1221,56 @@ void tagworld_nerva_observe_tick(NervaEngine *e, TagWorldNerva *tn, TagWorld *w,
     tagworld_metrics_track_queue(e, m);
 }
 
-/* Pure-feedback episodic credit: strengthen the policy edges actually used by the
- * selected actions of an ESCAPED episode, weaken those of a TIMEOUT/CAUGHT episode.
- * All changes go through the mutation queue. No oracle train_pair chains. */
+static int tagworld_is_push_policy_edge(const TagWorldNerva *tn, uint32_t edge_id) {
+    const uint32_t ids[] = {
+        tn->edge.seeker_route_to_push_chokepoint,
+        tn->edge.block_can_reach_to_push_chokepoint,
+        tn->edge.chokepoint_to_push_chokepoint,
+    };
+    for (size_t i = 0; i < sizeof(ids) / sizeof(ids[0]); ++i) {
+        if (ids[i] == edge_id) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static bool tagworld_decision_had_improvement(const TagWorldDecision *d) {
+    return d->led_to_block_at_chokepoint || d->led_to_path_blocked_by_tool;
+}
+
+static nerva_q8_8_t tagworld_eligibility_ltp_half(const NervaEngine *e) {
+    return (nerva_q8_8_t)((int32_t)e->cfg.ltp_delta_q8_8 / 2);
+}
+
+static uint32_t tagworld_eligibility_queue_edges(NervaEngine *e, const TagWorldDecision *d,
+                                               nerva_q8_8_t delta, uint32_t reason,
+                                               uint32_t only_edge_id,
+                                               int (*edge_filter)(const TagWorldNerva *, uint32_t),
+                                               const TagWorldNerva *tn) {
+    uint32_t queued = 0;
+    for (uint32_t j = 0; j < d->policy_edge_count; ++j) {
+        uint32_t edge_id = d->policy_edges[j];
+        if (edge_id >= e->edge_count) {
+            continue;
+        }
+        if (only_edge_id != UINT32_MAX && edge_id != only_edge_id) {
+            continue;
+        }
+        if (edge_filter && !edge_filter(tn, edge_id)) {
+            continue;
+        }
+        uint32_t tag = nerva_make_path_tag(e, edge_id);
+        if (nerva_queue_weight_delta(e, edge_id, delta, reason, tag)) {
+            queued++;
+        }
+    }
+    return queued;
+}
+
+/* Eligibility credit: strengthen/weaken policy edges from observed intermediate
+ * consequences per decision, not blanket final-outcome credit on every action.
+ * No oracle train_pair chains. */
 static void tagworld_pure_feedback_apply_credit(NervaEngine *e, TagWorldNerva *tn, TagWorld *w,
                                                 TagWorldMetrics *m, uint64_t *mut_applied_before) {
     TagWorldCreditTrace *ct = &tn->credit;
@@ -1235,31 +1282,61 @@ static void tagworld_pure_feedback_apply_credit(NervaEngine *e, TagWorldNerva *t
         tagworld_nerva_emit_actual(e, tn, tn->ev.runner_caught);
     }
 
-    bool escaped = (w->outcome == TAGWORLD_OUTCOME_ESCAPED);
-    nerva_q8_8_t delta = escaped ? e->cfg.ltp_delta_q8_8 : e->cfg.ltd_delta_q8_8;
-    uint32_t reason = escaped ? NERVA_REASON_FEEDBACK_CORRECT : NERVA_REASON_FEEDBACK_WRONG;
+    nerva_q8_8_t ltp_half = tagworld_eligibility_ltp_half(e);
+    nerva_q8_8_t ltp = e->cfg.ltp_delta_q8_8;
+    nerva_q8_8_t ltd = e->cfg.ltd_delta_q8_8;
 
     uint32_t queued = 0;
+    uint32_t strengthen = 0;
+    uint32_t weaken = 0;
+
     for (uint32_t i = 0; i < ct->decision_count; ++i) {
         const TagWorldDecision *d = &ct->decisions[i];
-        for (uint32_t j = 0; j < d->policy_edge_count; ++j) {
-            uint32_t edge_id = d->policy_edges[j];
-            if (edge_id >= e->edge_count) {
-                continue;
-            }
-            uint32_t tag = nerva_make_path_tag(e, edge_id);
-            if (nerva_queue_weight_delta(e, edge_id, delta, reason, tag)) {
-                queued++;
-            }
+
+        if (d->selected_action == TAG_ACTION_PUSH_BLOCK_TO_DOORWAY &&
+            d->led_to_block_at_chokepoint) {
+            uint32_t n = tagworld_eligibility_queue_edges(
+                e, d, ltp_half, NERVA_REASON_FEEDBACK_CORRECT, UINT32_MAX,
+                tagworld_is_push_policy_edge, tn);
+            strengthen += n;
+            queued += n;
+            m->eligibility_push_block_strengthen += n;
+        }
+
+        if (d->selected_action == TAG_ACTION_RUN_TO_SAFE && ct->episode_path_blocked_by_tool &&
+            w->outcome == TAGWORLD_OUTCOME_ESCAPED) {
+            uint32_t n = tagworld_eligibility_queue_edges(
+                e, d, ltp, NERVA_REASON_FEEDBACK_CORRECT,
+                tn->edge.path_blocked_by_tool_to_run_safe, NULL, tn);
+            strengthen += n;
+            queued += n;
+            m->eligibility_run_escape_strengthen += n;
+        }
+
+        if (d->selected_action == TAG_ACTION_WAIT && !tagworld_decision_had_improvement(d) &&
+            w->outcome == TAGWORLD_OUTCOME_TIMEOUT) {
+            uint32_t n = tagworld_eligibility_queue_edges(
+                e, d, ltd, NERVA_REASON_FEEDBACK_WRONG, tn->edge.chokepoint_to_wait, NULL, tn);
+            weaken += n;
+            queued += n;
+            m->eligibility_wait_timeout_weaken += n;
+        }
+
+        if (d->selected_action == TAG_ACTION_RUN_TO_SAFE &&
+            w->outcome != TAGWORLD_OUTCOME_ESCAPED) {
+            uint32_t n = tagworld_eligibility_queue_edges(
+                e, d, ltd, NERVA_REASON_FEEDBACK_WRONG,
+                tn->edge.path_blocked_by_tool_to_run_safe, NULL, tn);
+            weaken += n;
+            queued += n;
+            m->eligibility_run_fail_weaken += n;
         }
     }
+
     ct->mutations_queued = queued;
     m->pure_feedback_credit_mutations += queued;
-    if (escaped) {
-        m->pure_feedback_strengthen_mutations += queued;
-    } else {
-        m->pure_feedback_weaken_mutations += queued;
-    }
+    m->pure_feedback_strengthen_mutations += strengthen;
+    m->pure_feedback_weaken_mutations += weaken;
     tagworld_metrics_apply_mutations(e, m, mut_applied_before);
 }
 
@@ -1864,6 +1941,7 @@ int tagworld_run_episode(NervaEngine *e, TagWorldNerva *tn, TagWorld *w,
     tn->credit.decision_count = 0u;
     tn->credit.outcome = TAGWORLD_OUTCOME_NONE;
     tn->credit.mutations_queued = 0u;
+    tn->credit.episode_path_blocked_by_tool = false;
     bool pure_learn = tagworld_pure_feedback_learn_active(cfg);
     uint64_t mut_applied_before = e->debug.mutations_applied;
     nerva_prediction_clear(e);
@@ -1921,6 +1999,7 @@ int tagworld_run_episode(NervaEngine *e, TagWorldNerva *tn, TagWorld *w,
             if (pure_learn && tn->credit.decision_count > 0u) {
                 TagWorldDecision *d = &tn->credit.decisions[tn->credit.decision_count - 1u];
                 if (tagworld_is_block_at_chokepoint(w)) {
+                    tn->credit.episode_path_blocked_by_tool = true;
                     d->led_to_block_at_chokepoint = true;
                     d->led_to_path_blocked_by_tool = true;
                 }
@@ -2535,6 +2614,14 @@ void tagworld_print_summary(const TagWorldMetrics *m, FILE *out) {
             (unsigned long long)m->pure_feedback_strengthen_mutations);
     fprintf(out, "pure_feedback_weaken_mutations=%llu\n",
             (unsigned long long)m->pure_feedback_weaken_mutations);
+    fprintf(out, "eligibility_push_block_strengthen=%llu\n",
+            (unsigned long long)m->eligibility_push_block_strengthen);
+    fprintf(out, "eligibility_run_escape_strengthen=%llu\n",
+            (unsigned long long)m->eligibility_run_escape_strengthen);
+    fprintf(out, "eligibility_wait_timeout_weaken=%llu\n",
+            (unsigned long long)m->eligibility_wait_timeout_weaken);
+    fprintf(out, "eligibility_run_fail_weaken=%llu\n",
+            (unsigned long long)m->eligibility_run_fail_weaken);
     fprintf(out, "viz_frames=%llu\n", (unsigned long long)m->viz_frames);
 }
 
@@ -2587,6 +2674,12 @@ void tagworld_print_generalization_summary(const TagWorldGeneralizationResult *r
             (unsigned long long)train->pure_feedback_strengthen_mutations);
     fprintf(out, "train_pure_feedback_weaken_mutations=%llu\n",
             (unsigned long long)train->pure_feedback_weaken_mutations);
+    fprintf(out, "train_eligibility_push_block_strengthen=%llu\n",
+            (unsigned long long)train->eligibility_push_block_strengthen);
+    fprintf(out, "train_eligibility_run_escape_strengthen=%llu\n",
+            (unsigned long long)train->eligibility_run_escape_strengthen);
+    fprintf(out, "train_eligibility_wait_timeout_weaken=%llu\n",
+            (unsigned long long)train->eligibility_wait_timeout_weaken);
     fprintf(out, "eval_escape_rate=%.4f\n", eval->escape_rate);
     fprintf(out, "eval_baseline_escape_rate=%.4f\n", eval->baseline_escape_rate);
     fprintf(out, "eval_avg_mutations_per_episode=%.2f\n", eval->avg_mutations_per_episode);

@@ -1,16 +1,10 @@
 # v1.2.1 Results
 
-**Decision:** Repeat
+**Decision:** Repeat (superseded for learning by v1.2.1.1 eligibility credit)
 
-v1.2.1 now establishes the full pure-feedback credit trace:
-context -> selected action -> consequence -> outcome -> mutation.
-
-The mechanism fires through the mutation queue and oracle `train_pair` chains remain disabled.
-
-However, frozen eval on held-out pressure map G remains 0%. PUSH does not overtake WAIT because
-successful tool use requires a multi-decision chain, and random single-tick PUSH choices are often
-credited against eventual timeout. The next mechanism needed is delayed/eligibility-style credit
-over action sequences or intermediate consequence shaping.
+v1.2.1 established outcome-only pure-feedback credit wiring. That mechanism is honest but too blunt
+for multi-step tool use. See [v1.2.1.1 results](../v1.2.1.1_tagworld_eligibility_credit/results.md)
+for eligibility credit and promote evidence.
 
 ## Still TBD (blocks promote)
 

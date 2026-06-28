@@ -1193,6 +1193,8 @@ static void test_pure_feedback_escape_strengthens_selected_push_trace(void) {
     tn.credit.outcome = TAGWORLD_OUTCOME_NONE;
     tagworld_pf_make_decision(&tn.credit.decisions[0], TAG_ACTION_PUSH_BLOCK_TO_DOORWAY,
                               tn.ev.action_push_block_to_doorway, tn.ev.chokepoint_detected, edges, 1u);
+    tn.credit.decisions[0].led_to_block_at_chokepoint = true;
+    tn.credit.decisions[0].led_to_path_blocked_by_tool = true;
 
     TagWorldConfig cfg = tagworld_generalization_test_config();
     cfg.map_id = TAGWORLD_MAP_TOOL_G;
@@ -1200,7 +1202,7 @@ static void test_pure_feedback_escape_strengthens_selected_push_trace(void) {
     TagWorld w;
     tagworld_reset_for_config(&w, &cfg, 0u);
     w.done = true;
-    w.outcome = TAGWORLD_OUTCOME_ESCAPED;
+    w.outcome = TAGWORLD_OUTCOME_TIMEOUT;
 
     uint64_t mut = e.debug.mutations_applied;
     TagWorldMetrics m;
@@ -1209,9 +1211,9 @@ static void test_pure_feedback_escape_strengthens_selected_push_trace(void) {
                                     TAGWORLD_MODE_ACTION, true, &m, &mut);
 
     int32_t after = (int32_t)e.edges[pe].weight;
-    expect_true(after > before, "pure feedback escape strengthens selected push policy edge");
-    expect_true(tn.credit.outcome == TAGWORLD_OUTCOME_ESCAPED, "pure feedback records escaped outcome");
-    expect_true(m.pure_feedback_strengthen_mutations > 0u, "pure feedback escape queues strengthen mutation");
+    expect_true(after > before, "eligibility push+block strengthens push policy edge");
+    expect_true(m.eligibility_push_block_strengthen > 0u,
+                "eligibility push+block queues intermediate strengthen mutation");
     tagworld_pf_credit_teardown(&e);
 }
 
@@ -1245,8 +1247,9 @@ static void test_pure_feedback_timeout_weakens_selected_wait_trace(void) {
     tagworld_nerva_episode_feedback(&e, &tn, &w, TAG_ACTION_WAIT, TAGWORLD_MODE_ACTION, true, &m, &mut);
 
     int32_t after = (int32_t)e.edges[we].weight;
-    expect_true(after < before, "pure feedback timeout weakens selected wait policy edge");
-    expect_true(m.pure_feedback_weaken_mutations > 0u, "pure feedback timeout queues weaken mutation");
+    expect_true(after < before, "eligibility wait+timeout weakens wait policy edge");
+    expect_true(m.eligibility_wait_timeout_weaken > 0u,
+                "eligibility wait+timeout queues weaken mutation");
     tagworld_pf_credit_teardown(&e);
 }
 
@@ -1317,8 +1320,11 @@ static void test_pure_feedback_push_score_increases_after_successful_episode(voi
     tagworld_pf_make_decision(&tn.credit.decisions[0], TAG_ACTION_PUSH_BLOCK_TO_DOORWAY,
                               tn.ev.action_push_block_to_doorway, tn.ev.chokepoint_detected, push_edges,
                               3u);
+    tn.credit.decisions[0].led_to_block_at_chokepoint = true;
+    tn.credit.decisions[0].led_to_path_blocked_by_tool = true;
     tagworld_pf_make_decision(&tn.credit.decisions[1], TAG_ACTION_RUN_TO_SAFE,
                               tn.ev.action_run_to_safe, tn.ev.path_blocked_by_tool, run_edges, 1u);
+    tn.credit.episode_path_blocked_by_tool = true;
 
     TagWorldConfig cfg = tagworld_generalization_test_config();
     cfg.map_id = TAGWORLD_MAP_TOOL_G;
@@ -1337,10 +1343,118 @@ static void test_pure_feedback_push_score_increases_after_successful_episode(voi
     int32_t push_after =
         (int32_t)e.edges[pe1].weight + (int32_t)e.edges[pe2].weight + (int32_t)e.edges[pe3].weight;
     expect_true(push_after > push_before,
-                "pure feedback push score increases after successful episode");
+                "eligibility push+block increases push score after successful chain");
     expect_true((int32_t)e.edges[re].weight > 0,
-                "pure feedback strengthens run-to-safe edge used in successful episode");
+                "eligibility run+path_blocked+escape strengthens run-to-safe edge");
+    expect_true(m.eligibility_push_block_strengthen > 0u, "eligibility push block credit fired");
+    expect_true(m.eligibility_run_escape_strengthen > 0u, "eligibility run escape credit fired");
     tagworld_pf_credit_teardown(&e);
+}
+
+static void test_eligibility_push_without_block_neutral_on_timeout(void) {
+    NervaEngine e;
+    TagWorldNerva tn;
+    tagworld_pf_credit_setup(&e, &tn);
+
+    uint32_t pe = tn.edge.chokepoint_to_push_chokepoint;
+    e.edges[pe].weight = 0;
+    int32_t before = (int32_t)e.edges[pe].weight;
+
+    uint32_t edges[1] = {pe};
+    tn.credit.decision_count = 1u;
+    tagworld_pf_make_decision(&tn.credit.decisions[0], TAG_ACTION_PUSH_BLOCK_TO_DOORWAY,
+                              tn.ev.action_push_block_to_doorway, tn.ev.chokepoint_detected, edges, 1u);
+
+    TagWorldConfig cfg = tagworld_generalization_test_config();
+    cfg.map_id = TAGWORLD_MAP_TOOL_G;
+    cfg.pure_feedback = true;
+    TagWorld w;
+    tagworld_reset_for_config(&w, &cfg, 0u);
+    w.done = true;
+    w.outcome = TAGWORLD_OUTCOME_TIMEOUT;
+
+    uint64_t mut = e.debug.mutations_applied;
+    TagWorldMetrics m;
+    memset(&m, 0, sizeof(m));
+    tagworld_nerva_episode_feedback(&e, &tn, &w, TAG_ACTION_PUSH_BLOCK_TO_DOORWAY,
+                                    TAGWORLD_MODE_ACTION, true, &m, &mut);
+
+    expect_true((int32_t)e.edges[pe].weight == before,
+                "eligibility push without block is neutral on timeout");
+    expect_true(m.eligibility_push_block_strengthen == 0u,
+                "eligibility does not credit push without observed block");
+    tagworld_pf_credit_teardown(&e);
+}
+
+static void test_eligibility_run_escape_strengthens_run_edge(void) {
+    NervaEngine e;
+    TagWorldNerva tn;
+    tagworld_pf_credit_setup(&e, &tn);
+
+    uint32_t re = tn.edge.path_blocked_by_tool_to_run_safe;
+    e.edges[re].weight = 0;
+    int32_t before = (int32_t)e.edges[re].weight;
+
+    uint32_t edges[1] = {re};
+    tn.credit.decision_count = 1u;
+    tn.credit.episode_path_blocked_by_tool = true;
+    tagworld_pf_make_decision(&tn.credit.decisions[0], TAG_ACTION_RUN_TO_SAFE,
+                              tn.ev.action_run_to_safe, tn.ev.path_blocked_by_tool, edges, 1u);
+
+    TagWorldConfig cfg = tagworld_generalization_test_config();
+    cfg.map_id = TAGWORLD_MAP_TOOL_G;
+    cfg.pure_feedback = true;
+    TagWorld w;
+    tagworld_reset_for_config(&w, &cfg, 0u);
+    w.done = true;
+    w.outcome = TAGWORLD_OUTCOME_ESCAPED;
+
+    uint64_t mut = e.debug.mutations_applied;
+    TagWorldMetrics m;
+    memset(&m, 0, sizeof(m));
+    tagworld_nerva_episode_feedback(&e, &tn, &w, TAG_ACTION_RUN_TO_SAFE, TAGWORLD_MODE_ACTION, true,
+                                    &m, &mut);
+
+    expect_true((int32_t)e.edges[re].weight > before,
+                "eligibility path_blocked+run+escape strengthens run edge");
+    expect_true(m.eligibility_run_escape_strengthen > 0u,
+                "eligibility run escape credit queues mutation");
+    tagworld_pf_credit_teardown(&e);
+}
+
+static void test_tagworld_pure_feedback_eligibility_ablation_reduces_push(void) {
+    TagWorldConfig cfg = tagworld_generalization_test_config();
+    cfg.seed = 1u;
+    cfg.pure_feedback = true;
+    cfg.generalization_eval_map = TAGWORLD_MAP_TOOL_G;
+
+    NervaEngine e;
+    expect_true(nerva_engine_init(&e, nerva_config_test()) == 0, "pf eligibility ablation init");
+    TagWorldNerva tn;
+    TagWorldGeneralizationResult result;
+    expect_true(tagworld_run_generalization_result(&e, &cfg, &result) == 0,
+                "pf eligibility ablation full run");
+    tagworld_nerva_init(&e, &tn);
+
+    uint32_t push_edge_before = tagworld_nerva_edge_weight(&e, tn.edge.chokepoint_to_push_chokepoint);
+    expect_true(push_edge_before > 0u, "pf eligibility learned push edge before ablation");
+    expect_true(result.eval.escape_rate >= result.eval.baseline_escape_rate + 0.2,
+                "pf eligibility eval beats random by 20pp before ablation");
+
+    uint64_t push_before = result.eval.action_push_doorway_count;
+    double escape_before = result.eval.escape_rate;
+
+    tagworld_ablate_learned_push_edges(&e, &tn);
+
+    TagWorldConfig eval_cfg = cfg;
+    eval_cfg.map_id = TAGWORLD_MAP_TOOL_G;
+    TagWorldMetrics ablated;
+    expect_true(tagworld_run_frozen_eval_only(&e, &tn, &eval_cfg, &ablated) == 0,
+                "pf eligibility ablated eval on G");
+    expect_true(ablated.action_push_doorway_count < push_before ||
+                    ablated.escape_rate < escape_before,
+                "pf eligibility ablation reduces push or escape");
+    nerva_engine_free(&e);
 }
 
 int test_tagworld_run(void) {
@@ -1388,6 +1502,9 @@ int test_tagworld_run(void) {
     test_pure_feedback_timeout_weakens_selected_wait_trace();
     test_pure_feedback_trace_links_context_action_outcome_mutation();
     test_pure_feedback_push_score_increases_after_successful_episode();
+    test_eligibility_push_without_block_neutral_on_timeout();
+    test_eligibility_run_escape_strengthens_run_edge();
+    test_tagworld_pure_feedback_eligibility_ablation_reduces_push();
     test_tagworld_held_out_maps_push_then_run_wins();
     test_tagworld_viz_no_state_change();
     test_tagworld_replay_deterministic();

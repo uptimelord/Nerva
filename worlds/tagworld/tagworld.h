@@ -170,6 +170,7 @@ typedef struct TagWorldCreditTrace {
     uint32_t decision_count;
     TagWorldOutcome outcome;
     uint32_t mutations_queued;
+    bool episode_path_blocked_by_tool;
     TagWorldDecision decisions[TAGWORLD_MAX_DECISIONS];
 } TagWorldCreditTrace;
 
@@ -253,6 +254,10 @@ typedef struct TagWorldMetrics {
     uint64_t pure_feedback_credit_mutations;
     uint64_t pure_feedback_strengthen_mutations;
     uint64_t pure_feedback_weaken_mutations;
+    uint64_t eligibility_push_block_strengthen;
+    uint64_t eligibility_run_escape_strengthen;
+    uint64_t eligibility_wait_timeout_weaken;
+    uint64_t eligibility_run_fail_weaken;
 } TagWorldMetrics;
 
 #define TAGWORLD_ACTION_SCORE_TRACE_MAX 12u

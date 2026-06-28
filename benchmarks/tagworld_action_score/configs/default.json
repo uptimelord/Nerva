@@ -1,0 +1,10 @@
+{
+  "map": "tool",
+  "mode": "action",
+  "online_frozen": true,
+  "learn_episodes": 200,
+  "eval_episodes": 100,
+  "online_explore_pct": 15,
+  "seeds": [1, 5, 11],
+  "require_eval_fallback_count_zero": true
+}

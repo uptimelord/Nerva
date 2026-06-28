@@ -28,6 +28,7 @@ static void print_usage(const char *prog) {
     printf("  --online-frozen     learn online then frozen eval (200+100 episodes)\n");
     printf("  --learn-episodes N  online learn phase length (default 200)\n");
     printf("  --eval-episodes N   frozen eval phase length (default 100)\n");
+    printf("  --action-score-trace  log action score fallback traces to stderr\n");
     printf("  --replay PATH       replay log (no learning)\n");
     printf("  --write-replay PATH write JSONL replay log\n");
     printf("  --snapshot-in PATH  load graph snapshot\n");
@@ -108,6 +109,8 @@ int main(int argc, char **argv) {
             cfg.online_learn_episodes = (uint32_t)strtoul(argv[++i], NULL, 10);
         } else if (strcmp(argv[i], "--eval-episodes") == 0 && i + 1 < argc) {
             cfg.online_eval_episodes = (uint32_t)strtoul(argv[++i], NULL, 10);
+        } else if (strcmp(argv[i], "--action-score-trace") == 0) {
+            cfg.action_score_trace = true;
         } else if (strcmp(argv[i], "--replay") == 0 && i + 1 < argc) {
             cfg.replay = true;
             cfg.replay_path = argv[++i];

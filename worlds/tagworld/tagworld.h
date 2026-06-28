@@ -152,6 +152,7 @@ typedef struct TagWorldConfig {
     uint32_t online_eval_episodes;
     uint32_t online_explore_pct;
     uint32_t online_anneal_episodes;
+    bool action_score_trace;
     TagWorldMapId map_id;
 } TagWorldConfig;
 
@@ -188,7 +189,26 @@ typedef struct TagWorldMetrics {
     uint64_t total_ticks;
     uint64_t total_events;
     uint64_t total_mutations_applied;
+    uint64_t action_score_fallback_count;
 } TagWorldMetrics;
+
+#define TAGWORLD_ACTION_SCORE_TRACE_MAX 12u
+
+typedef struct TagWorldActionScoreContrib {
+    uint32_t edge_id;
+    uint32_t source_id;
+    TagWorldAction action;
+    int32_t weight_q8_8;
+} TagWorldActionScoreContrib;
+
+typedef struct TagWorldActionScoreTrace {
+    int32_t edge_scores[TAG_ACTION_COUNT];
+    int32_t final_scores[TAG_ACTION_COUNT];
+    TagWorldAction selected;
+    bool fallback_used;
+    uint32_t contrib_count;
+    TagWorldActionScoreContrib contrib[TAGWORLD_ACTION_SCORE_TRACE_MAX];
+} TagWorldActionScoreTrace;
 
 typedef struct TagWorldFrozenResult {
     TagWorldMetrics learn;
@@ -250,6 +270,11 @@ void tagworld_nerva_inject_actual_edge(NervaEngine *e, uint32_t edge_id);
 void tagworld_nerva_tick_quiet(NervaEngine *e, uint32_t budget);
 TagWorldAction tagworld_nerva_select_action(NervaEngine *e, TagWorldNerva *tn,
                                             const TagWorld *w, uint32_t valid_mask);
+TagWorldAction tagworld_nerva_select_action_scored(NervaEngine *e, TagWorldNerva *tn,
+                                                   const TagWorld *w, uint32_t valid_mask,
+                                                   TagWorldMetrics *metrics,
+                                                   TagWorldActionScoreTrace *trace);
+void tagworld_print_action_score_trace(const TagWorldActionScoreTrace *trace, FILE *out);
 void tagworld_nerva_observe_tick(NervaEngine *e, TagWorldNerva *tn, TagWorld *w,
                                  TagWorldMode mode, TagWorldMetrics *m,
                                  uint64_t *mut_applied_before);

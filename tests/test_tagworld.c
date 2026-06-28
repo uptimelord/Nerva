@@ -520,6 +520,99 @@ static void test_tagworld_post_push_selects_run_after_dynamics_pretrain(void) {
     nerva_engine_free(&e);
 }
 
+static void test_tagworld_action_score_trace_lists_contributors(void) {
+    TagWorldConfig cfg = tagworld_online_frozen_test_config();
+    cfg.episodes = 0u;
+    cfg.seed = 1u;
+
+    NervaEngine e;
+    expect_true(nerva_engine_init(&e, nerva_config_test()) == 0, "score trace init");
+    TagWorldNerva tn;
+    tagworld_nerva_init(&e, &tn);
+    tagworld_pretrain_for_config(&e, &tn, &cfg);
+
+    TagWorld w;
+    tagworld_reset_for_config(&w, &cfg, 0u);
+    tagworld_nerva_emit_actual(&e, &tn, tn.ev.path_blocked);
+
+    TagWorldActionScoreTrace trace;
+    memset(&trace, 0, sizeof(trace));
+    TagWorldAction action = tagworld_nerva_select_action_scored(
+        &e, &tn, &w, tagworld_valid_action_mask(&w), NULL, &trace);
+    expect_true(trace.contrib_count > 0u, "score trace records edge contributors");
+    expect_true(trace.edge_scores[TAG_ACTION_RUN_TO_SAFE] > 0,
+                "score trace run edge score positive after dynamics pretrain");
+    expect_true(action == TAG_ACTION_RUN_TO_SAFE, "score trace selects run when path blocked");
+    expect_true(!trace.fallback_used, "score trace no fallback when run score positive");
+    nerva_engine_free(&e);
+}
+
+static void test_tagworld_action_score_stable_after_10k_train_pairs(void) {
+    TagWorldConfig cfg = tagworld_online_frozen_test_config();
+    cfg.episodes = 0u;
+    cfg.seed = 1u;
+
+    NervaEngine e;
+    expect_true(nerva_engine_init(&e, nerva_config_test()) == 0, "10k train init");
+    TagWorldNerva tn;
+    tagworld_nerva_init(&e, &tn);
+    tagworld_pretrain_for_config(&e, &tn, &cfg);
+
+    for (uint32_t i = 0; i < 10000u; ++i) {
+        tagworld_nerva_train_pair(&e, &tn, tn.ev.path_open, tn.edge.path_open_to_push_doorway,
+                                  tn.ev.action_push_block_to_doorway, 1);
+        tagworld_nerva_train_pair(&e, &tn, tn.ev.path_blocked, tn.edge.path_blocked_to_run_safe,
+                                  tn.ev.action_run_to_safe, 1);
+    }
+
+    TagWorld w;
+    tagworld_reset_for_config(&w, &cfg, 0u);
+    tagworld_nerva_emit_actual(&e, &tn, tn.ev.path_blocked);
+
+    TagWorldActionScoreTrace trace;
+    memset(&trace, 0, sizeof(trace));
+    TagWorldAction action = tagworld_nerva_select_action_scored(
+        &e, &tn, &w, tagworld_valid_action_mask(&w), NULL, &trace);
+    expect_true(trace.edge_scores[TAG_ACTION_RUN_TO_SAFE] > 0,
+                "10k train pairs keep run edge score positive");
+    expect_true(action == TAG_ACTION_RUN_TO_SAFE, "10k train pairs still select run when blocked");
+    nerva_engine_free(&e);
+}
+
+static void test_tagworld_frozen_eval_no_action_score_fallback(void) {
+    TagWorldConfig cfg = tagworld_online_frozen_test_config();
+    cfg.seed = 1u;
+
+    NervaEngine e;
+    expect_true(nerva_engine_init(&e, nerva_config_test()) == 0, "fallback eval init");
+    TagWorldFrozenResult result;
+    expect_true(tagworld_run_frozen_result(&e, &cfg, &result) == 0, "fallback eval run");
+    expect_true(result.eval.action_score_fallback_count == 0u,
+                "frozen eval records zero action score fallbacks");
+    nerva_engine_free(&e);
+}
+
+static void test_tagworld_action_score_long_learn_1k(void) {
+    TagWorldConfig cfg = tagworld_online_frozen_test_config();
+    cfg.seed = 1u;
+    cfg.online_learn_episodes = 1000u;
+    cfg.online_eval_episodes = 50u;
+
+    NervaEngine e;
+    expect_true(nerva_engine_init(&e, nerva_config_test()) == 0, "1k learn init");
+    TagWorldFrozenResult result;
+    expect_true(tagworld_run_frozen_result(&e, &cfg, &result) == 0, "1k learn run");
+    TagWorldConfig baseline_cfg = cfg;
+    baseline_cfg.episodes = cfg.online_eval_episodes;
+    double random_rate =
+        tagworld_baseline_random_escape_rate(&baseline_cfg, baseline_cfg.episodes);
+    expect_true(result.eval.escape_rate >= random_rate + 0.20,
+                "1k learn frozen eval still beats random by >=20pp");
+    expect_true(result.eval.action_score_fallback_count == 0u,
+                "1k learn frozen eval zero action score fallbacks");
+    nerva_engine_free(&e);
+}
+
 static void test_tagworld_online_frozen_learn_push_increases(void) {
     TagWorldConfig cfg = tagworld_online_frozen_test_config();
     cfg.seed = 1u;
@@ -619,6 +712,10 @@ int test_tagworld_run(void) {
     test_tagworld_tool_action_beats_random_baseline();
     test_tagworld_online_action_edges_zero_after_pretrain();
     test_tagworld_post_push_selects_run_after_dynamics_pretrain();
+    test_tagworld_action_score_trace_lists_contributors();
+    test_tagworld_action_score_stable_after_10k_train_pairs();
+    test_tagworld_frozen_eval_no_action_score_fallback();
+    test_tagworld_action_score_long_learn_1k();
     test_tagworld_online_push_increases_over_episodes();
     test_tagworld_online_beats_random_baseline();
     test_tagworld_online_frozen_learn_push_increases();

@@ -851,8 +851,10 @@ static int tagworld_is_policy_action_edge(const TagWorldNerva *tn, uint32_t edge
     return 0;
 }
 
-TagWorldAction tagworld_nerva_select_action(NervaEngine *e, TagWorldNerva *tn,
-                                            const TagWorld *w, uint32_t valid_mask) {
+TagWorldAction tagworld_nerva_select_action_scored(NervaEngine *e, TagWorldNerva *tn,
+                                                   const TagWorld *w, uint32_t valid_mask,
+                                                   TagWorldMetrics *metrics,
+                                                   TagWorldActionScoreTrace *trace) {
     (void)w;
     const uint32_t action_nodes[] = {
         tn->ev.action_wait,
@@ -870,9 +872,9 @@ TagWorldAction tagworld_nerva_select_action(NervaEngine *e, TagWorldNerva *tn,
     nerva_set_prediction_mode(e, 0);
     tagworld_nerva_tick_quiet(e, 4);
 
-    nerva_q8_8_t scores[TAG_ACTION_COUNT];
+    int32_t edge_scores[TAG_ACTION_COUNT];
     for (TagWorldAction a = 0; a < TAG_ACTION_COUNT; ++a) {
-        scores[a] = 0;
+        edge_scores[a] = 0;
     }
 
     for (uint32_t edge_id = 0; edge_id < e->edge_count; ++edge_id) {
@@ -890,53 +892,86 @@ TagWorldAction tagworld_nerva_select_action(NervaEngine *e, TagWorldNerva *tn,
         if (action >= TAG_ACTION_COUNT) {
             continue;
         }
-        scores[action] += ed->weight;
+        edge_scores[action] = nerva_i32_saturating_add(edge_scores[action], (int32_t)ed->weight);
+        if (trace && trace->contrib_count < TAGWORLD_ACTION_SCORE_TRACE_MAX) {
+            TagWorldActionScoreContrib *c = &trace->contrib[trace->contrib_count++];
+            c->edge_id = edge_id;
+            c->source_id = ed->source;
+            c->action = action;
+            c->weight_q8_8 = (int32_t)ed->weight;
+        }
     }
 
     TagWorldAction best = TAG_ACTION_WAIT;
-    nerva_q8_8_t best_score = -32768;
+    int32_t best_score = NERVA_I32_SCORE_MIN;
     uint32_t best_id = UINT32_MAX;
+    int32_t final_scores[TAG_ACTION_COUNT];
+    for (TagWorldAction a = 0; a < TAG_ACTION_COUNT; ++a) {
+        final_scores[a] = edge_scores[a];
+    }
     for (TagWorldAction a = 0; a < TAG_ACTION_COUNT; ++a) {
         if (!(valid_mask & (1u << a))) {
             continue;
         }
         uint32_t node = tagworld_action_node(tn, a);
-        nerva_q8_8_t score = scores[a];
-        if (e->nodes[node].v > score) {
-            score = e->nodes[node].v;
-        }
+        int32_t score = nerva_i32_max(edge_scores[a], (int32_t)e->nodes[node].v);
+        final_scores[a] = score;
         if (score > best_score || (score == best_score && node < best_id)) {
             best_score = score;
             best = a;
             best_id = node;
         }
     }
-    if (best_score <= 0) {
-        TagWorldAction best_by_v = TAG_ACTION_COUNT;
-        nerva_q8_8_t best_v = 0;
-        for (TagWorldAction a = 0; a < TAG_ACTION_COUNT; ++a) {
-            if (!(valid_mask & (1u << a))) {
-                continue;
-            }
-            uint32_t node = tagworld_action_node(tn, a);
-            if (e->nodes[node].v > best_v) {
-                best_v = e->nodes[node].v;
-                best_by_v = a;
-            }
+
+    bool invalid_scores = false;
+    for (TagWorldAction a = 0; a < TAG_ACTION_COUNT; ++a) {
+        if (!(valid_mask & (1u << a))) {
+            continue;
         }
-        if (best_by_v < TAG_ACTION_COUNT) {
-            best = best_by_v;
-        } else {
-            for (TagWorldAction a = 0; a < TAG_ACTION_COUNT; ++a) {
-                if (valid_mask & (1u << a)) {
-                    best = a;
-                    break;
-                }
-            }
+        if (edge_scores[a] < 0) {
+            invalid_scores = true;
+            break;
         }
     }
+
+    bool fallback_used = invalid_scores;
+    if (fallback_used && metrics) {
+        metrics->action_score_fallback_count++;
+    }
+
+    if (trace) {
+        for (TagWorldAction a = 0; a < TAG_ACTION_COUNT; ++a) {
+            trace->edge_scores[a] = edge_scores[a];
+            trace->final_scores[a] = final_scores[a];
+        }
+        trace->selected = best;
+        trace->fallback_used = fallback_used;
+    }
+
     tn->last_action = best;
     return best;
+}
+
+TagWorldAction tagworld_nerva_select_action(NervaEngine *e, TagWorldNerva *tn,
+                                            const TagWorld *w, uint32_t valid_mask) {
+    return tagworld_nerva_select_action_scored(e, tn, w, valid_mask, NULL, NULL);
+}
+
+void tagworld_print_action_score_trace(const TagWorldActionScoreTrace *trace, FILE *out) {
+    if (!trace || !out) {
+        return;
+    }
+    fprintf(out, "action_score_trace fallback=%d selected=%d\n", trace->fallback_used ? 1 : 0,
+            (int)trace->selected);
+    for (TagWorldAction a = 0; a < TAG_ACTION_COUNT; ++a) {
+        fprintf(out, "  action=%d edge_score=%d final_score=%d\n", (int)a,
+                (int)trace->edge_scores[a], (int)trace->final_scores[a]);
+    }
+    for (uint32_t i = 0; i < trace->contrib_count; ++i) {
+        const TagWorldActionScoreContrib *c = &trace->contrib[i];
+        fprintf(out, "  contrib edge=%u source=%u action=%d weight=%d\n", c->edge_id, c->source_id,
+                (int)c->action, (int)c->weight_q8_8);
+    }
 }
 
 static void tagworld_metrics_track_queue(NervaEngine *e, TagWorldMetrics *m) {
@@ -1212,7 +1247,7 @@ static void tagworld_record_episode_action(TagWorldNerva *tn, TagWorldAction act
 static TagWorldAction tagworld_select_action_for_episode(NervaEngine *e, TagWorldNerva *tn,
                                                          const TagWorld *w, uint32_t valid_mask,
                                                          const TagWorldConfig *cfg,
-                                                         uint32_t episode) {
+                                                         TagWorldMetrics *m, uint32_t episode) {
     (void)episode;
     if (g_online_phase != TAGWORLD_ONLINE_EVAL && cfg->online_tool_acquisition &&
         cfg->online_explore_pct > 0u &&
@@ -1225,7 +1260,18 @@ static TagWorldAction tagworld_select_action_for_episode(NervaEngine *e, TagWorl
             return action;
         }
     }
-    return tagworld_nerva_select_action(e, tn, w, valid_mask);
+    TagWorldActionScoreTrace trace;
+    TagWorldActionScoreTrace *trace_ptr = NULL;
+    if (cfg->action_score_trace) {
+        memset(&trace, 0, sizeof(trace));
+        trace_ptr = &trace;
+    }
+    TagWorldAction action =
+        tagworld_nerva_select_action_scored(e, tn, w, valid_mask, m, trace_ptr);
+    if (trace_ptr && trace.fallback_used) {
+        tagworld_print_action_score_trace(trace_ptr, stderr);
+    }
+    return action;
 }
 
 static void tagworld_record_action_metric(TagWorldMetrics *m, TagWorldAction action) {
@@ -1493,7 +1539,7 @@ int tagworld_run_episode(NervaEngine *e, TagWorldNerva *tn, TagWorld *w,
             tagworld_emit_state_events(e, tn, w, m);
             uint32_t valid_mask = tagworld_valid_action_mask(w);
             TagWorldAction action = tagworld_select_action_for_episode(
-                e, tn, w, valid_mask, cfg, (uint32_t)m->episodes);
+                e, tn, w, valid_mask, cfg, m, (uint32_t)m->episodes);
             tagworld_record_episode_action(tn, action);
             tagworld_record_action_metric(m, action);
             tagworld_apply_action(w, action);
@@ -1939,6 +1985,8 @@ void tagworld_print_summary(const TagWorldMetrics *m, FILE *out) {
     fprintf(out, "escaped_last_window=%llu\n", (unsigned long long)m->escaped_last_window);
     fprintf(out, "learned_edge_count=%u\n", m->learned_edge_count);
     fprintf(out, "provisional_edge_count=%u\n", m->provisional_edge_count);
+    fprintf(out, "action_score_fallback_count=%llu\n",
+            (unsigned long long)m->action_score_fallback_count);
     fprintf(out, "viz_frames=%llu\n", (unsigned long long)m->viz_frames);
 }
 
@@ -1961,6 +2009,8 @@ void tagworld_print_frozen_summary(const TagWorldFrozenResult *r, FILE *out) {
     fprintf(out, "eval_escape_rate=%.4f\n", eval->escape_rate);
     fprintf(out, "eval_baseline_escape_rate=%.4f\n", eval->baseline_escape_rate);
     fprintf(out, "eval_avg_mutations_per_episode=%.2f\n", eval->avg_mutations_per_episode);
+    fprintf(out, "eval_action_score_fallback_count=%llu\n",
+            (unsigned long long)eval->action_score_fallback_count);
     fprintf(out, "eval_action_push_doorway_count=%llu\n",
             (unsigned long long)eval->action_push_doorway_count);
     tagworld_print_summary(eval, out);

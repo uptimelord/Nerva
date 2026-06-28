@@ -222,8 +222,17 @@ static void test_feedback_poodle_experiment_artifacts(void) {
     nerva_engine_free(&e);
 }
 
+static void test_i32_saturating_add_clips(void) {
+    expect_true(nerva_i32_saturating_add(NERVA_I32_SCORE_MAX, 1) == NERVA_I32_SCORE_MAX,
+                "i32 sat add clips high");
+    expect_true(nerva_i32_saturating_add(NERVA_I32_SCORE_MIN, -1) == NERVA_I32_SCORE_MIN,
+                "i32 sat add clips low");
+    expect_true(nerva_i32_saturating_add(100, 200) == 300, "i32 sat add normal");
+}
+
 int test_learning_run(void) {
     g_failures = 0;
+    test_i32_saturating_add_clips();
     test_feedback_correct_strengthens_used_edges();
     test_feedback_wrong_weakens_used_edges();
     test_feedback_skips_unused_edges();

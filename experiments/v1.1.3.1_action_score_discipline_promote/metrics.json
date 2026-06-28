@@ -1,0 +1,13 @@
+{
+  "experiment": "v1.1.3.1_action_score_discipline_promote",
+  "decision": "promote",
+  "tag": "v1.1.3.1",
+  "date": "2026-06-28",
+  "tests_passed": 115,
+  "frozen_eval_seed1": {
+    "eval_escape_rate": 1.0,
+    "eval_action_score_fallback_count": 0
+  },
+  "fuzz_10k_train_pairs": "run_edge_score_positive",
+  "long_learn_1k": "frozen_eval_passes_gate"
+}

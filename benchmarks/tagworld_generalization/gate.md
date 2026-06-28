@@ -25,7 +25,7 @@ Repeat for seeds 5 and 11. Optional: `--eval-map E`, `--eval-map F`. Invariance:
 - All unit tests pass (including v1.1.3 frozen regression)
 - Map D geometry differs from map A
 - Rename/copy invariance: `D'` frozen eval matches D metrics
-- Held-out novel map D: beats random by >=20pp on seeds 1, 5, 11 (`tagworld_generalization_beats_random_gate` handles saturated baselines)
+- Held-out novel map D: frozen eval escape on seeds 1, 5, 11. Prefer `eval_escape_rate >= baseline + 0.20` when baseline leaves headroom; when **random baseline is literally 100%** (margin 0 pp), `tagworld_generalization_beats_random_gate` requires perfect learned eval instead.
 - Frozen eval: `avg_mutations_per_episode == 0`
 - Ablation of learned chokepoint push edges reduces push or escape
 - Trace shows abstract chokepoint → push → block at chokepoint → path blocked by tool → run → escaped

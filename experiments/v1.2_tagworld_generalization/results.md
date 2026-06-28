@@ -28,7 +28,7 @@ Tag: `v1.2` (final promote)
 | Unit tests | **124/124 pass** |
 | Map D vs A geometry | `test_tagworld_map_d_not_clone_of_a` |
 | D rename/copy invariance | `test_tagworld_generalization_rename_copy_invariance` |
-| D frozen eval seeds 1, 5, 11 | 100% escape (saturated random baseline 100%; gate via `tagworld_generalization_beats_random_gate`) |
+| D frozen eval seeds 1, 5, 11 | 100% learned escape; **random baseline literally 100%** (margin **0 pp**, not +20 pp). Gate passes via `tagworld_generalization_beats_random_gate` alternate rule: when `baseline + 0.20 > 1.0`, require perfect eval escape. |
 | Frozen eval mutations | 0 per episode |
 | Ablation | `test_tagworld_generalization_ablation_reduces_push` |
 | Abstract trace path | `test_tagworld_generalization_abstract_trace_path` |

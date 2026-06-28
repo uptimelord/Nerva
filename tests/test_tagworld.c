@@ -747,7 +747,7 @@ static void test_tagworld_generalization_eval_beats_random_on_D(void) {
         expect_true(result.eval_map == TAGWORLD_MAP_TOOL_D, "default held-out eval is map D");
         expect_true(tagworld_generalization_beats_random_gate(result.eval.escape_rate,
                                                             result.eval.baseline_escape_rate),
-                    "held-out map D beats random by >=20pp (or saturated baseline at 100% eval)");
+                    "held-out map D passes random gate (>=20pp margin or saturated-baseline perfect eval)");
         expect_true(result.eval.action_push_doorway_count > 0u, "held-out eval uses push action");
         nerva_engine_free(&e);
     }

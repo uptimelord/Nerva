@@ -86,11 +86,14 @@ typedef struct ChatWorldNerva {
     uint32_t pair_node[CHATWORLD_MAX_TOKENS];
     uint32_t punct_node[CHATWORLD_MAX_TOKENS];
     uint32_t output_node[CHATWORLD_MAX_VOCAB];
+    uint32_t key_node[CHATWORLD_MAX_VOCAB];
     char output_token[CHATWORLD_MAX_VOCAB][CHATWORLD_MAX_TOKEN_LEN + 1u];
+    char key_token[CHATWORLD_MAX_VOCAB][CHATWORLD_MAX_TOKEN_LEN + 1u];
     uint32_t token_count;
     uint32_t pair_count;
     uint32_t punct_count;
     uint32_t output_count;
+    uint32_t key_count;
 } ChatWorldNerva;
 
 typedef struct ChatWorldMemoryPair {

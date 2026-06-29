@@ -21,6 +21,8 @@ It supports a small dialogue game where learned surface traces can:
 - render only fired `OUTPUT_TOKEN:*` nodes
 - produce learned greetings, acknowledgements, and supported unknown responses
 - correct a prior remembered value through later trace-backed support
+- learn small write-phrase chunks such as `I am called X` and `call me X` as
+  alternate ways to bind the same memory key
 
 The C host may emit mechanical surface events, run Nerva ticks, read fired
 action/output nodes, execute the fired memory path, render fired output tokens, and
@@ -39,14 +41,14 @@ Supported:
 - held-out entities on learned surface forms
 - learned unknown only when `ACTION:RESP_UNKNOWN` fires
 - trace-backed correction behavior
+- learned write paraphrases for the identity key, limited to trained chunks
 
 Not supported:
 
 - open-domain conversation
 - semantic parsing
 - embeddings, transformers, neural networks, or runtime LLM/API teachers
-- paraphrase equivalence such as `I am called Ada` until a later learned chunk/schema
-  stage
+- broad paraphrase equivalence beyond the trained chunks
 - unrestricted free-form generation
 
 Datasets live under `datasets/`. Benchmark gates live in `benchmarks/chatworld_lite/`

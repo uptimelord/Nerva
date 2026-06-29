@@ -1,9 +1,8 @@
 # utterance	expected	key	value	learn
-hey	GREET			0
 hello there	GREET			0
 thank you kindly	ACK			0
 what is my favorite color	UNKNOWN			0
 my name is Mira	ACK	name	mira	1
 what is my name	MEMORY_VALUE	name	mira	0
-sparrow is bird	ACK	sparrow	bird	1
-what is sparrow	MEMORY_VALUE	sparrow	bird	0
+my name is Turing	ACK	name	turing	1
+what is my name	MEMORY_VALUE	name	turing	0

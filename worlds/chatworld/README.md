@@ -2,21 +2,52 @@
 
 Language-game world for Nerva.
 
-`worlds/chatworld/` owns the simulator, surface tokenizer, candidate action generation, response
-frame selection, memory table, and trace-backed feedback loop. CLI parsing stays in
+`worlds/chatworld/` owns the simulator, surface adapter, graph binding/action/output
+affordances, memory table, and trace-backed feedback loop. CLI parsing stays in
 `tools/chatworld_cli.c`.
 
-The first implementation is ChatWorld-lite:
+## v1.4 Claim
 
-- surface tokens only
-- token-at-position and adjacent token-pair surface features
-- response-frame actions
-- mechanical candidate memory write/read actions
-- multiple surface-position binding candidates for memory actions
-- zero-weight policy edges at start
-- signed learned support for candidate selection
-- no fallback responder
-- no runtime LLM/API teacher
-- train/dev/frozen TSV datasets under `datasets/`
+ChatWorld v1.4 is a bounded surface-text circuit:
 
-Benchmark gates live in `benchmarks/chatworld_lite/`.
+```text
+surface tokens -> binding nodes -> MEM_WRITE/MEM_READ/ACTION nodes -> OUTPUT_TOKEN nodes
+```
+
+It supports a small dialogue game where learned surface traces can:
+
+- bind key/value positions in fixed-form text
+- write and read memory through fired graph paths
+- render only fired `OUTPUT_TOKEN:*` nodes
+- produce learned greetings, acknowledgements, and supported unknown responses
+- correct a prior remembered value through later trace-backed support
+
+The C host may emit mechanical surface events, run Nerva ticks, read fired
+action/output nodes, execute the fired memory path, render fired output tokens, and
+report `NO_SUPPORTED_RESPONSE` or `CONTRADICTION_OR_AMBIGUOUS_RESPONSE`.
+
+The C host must not rank candidates, choose answer content, choose response labels,
+fall back to unknown, create graph nodes during frozen eval, or emit supervision labels
+as events.
+
+## Boundaries
+
+Supported:
+
+- bounded same-template memory heartbeat, for example `my name is Ada` followed by
+  `what is my name`
+- held-out entities on learned surface forms
+- learned unknown only when `ACTION:RESP_UNKNOWN` fires
+- trace-backed correction behavior
+
+Not supported:
+
+- open-domain conversation
+- semantic parsing
+- embeddings, transformers, neural networks, or runtime LLM/API teachers
+- paraphrase equivalence such as `I am called Ada` until a later learned chunk/schema
+  stage
+- unrestricted free-form generation
+
+Datasets live under `datasets/`. Benchmark gates live in `benchmarks/chatworld_lite/`
+until the benchmark folder is renamed for v1.4.

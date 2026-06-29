@@ -718,6 +718,165 @@ static void test_chatworld_stage5_paraphrase_write_chunk_paths(void) {
     }
 }
 
+static void test_chatworld_stage5_1_held_out_paraphrase_values(void) {
+    const char *train_path = "build/chatworld_stage5_1_train.tsv";
+    const char *frozen_path = "build/chatworld_stage5_1_frozen.tsv";
+    const char *trace_path = "build/chatworld_stage5_1_trace.log";
+    const char *ablate_trace_path = "build/chatworld_stage5_1_ablate_trace.log";
+    FILE *f = fopen(train_path, "w");
+    expect_true(f != NULL, "chatworld stage5.1 train file opens");
+    if (f) {
+        fputs("# utterance\texpected\tkey\tvalue\tlearn\n", f);
+        fputs("I am called Ada\tACK\tname\tada\t1\n", f);
+        fputs("call me Bob\tACK\tname\tbob\t1\n", f);
+        fclose(f);
+    }
+    f = fopen(frozen_path, "w");
+    expect_true(f != NULL, "chatworld stage5.1 frozen file opens");
+    if (f) {
+        fputs("# utterance\texpected\tkey\tvalue\tlearn\n", f);
+        fputs("I am called Grace\tACK\tname\tgrace\t0\n", f);
+        fputs("what is my name\tMEMORY_VALUE\tname\tgrace\t0\n", f);
+        fputs("call me Turing\tACK\tname\tturing\t0\n", f);
+        fputs("what is my name\tMEMORY_VALUE\tname\tturing\t0\n", f);
+        fclose(f);
+    }
+
+    NervaEngine e;
+    ChatWorldNerva preload_cw;
+    ChatWorldDataset train_ds;
+    ChatWorldDataset frozen_ds;
+    ChatWorldConfig cfg;
+    ChatWorldResult result;
+    chatworld_config_defaults(&cfg);
+    cfg.train_path = train_path;
+    cfg.frozen_path = frozen_path;
+    cfg.trace_path = trace_path;
+    cfg.train_epochs = 40u;
+    expect_true(nerva_engine_init(&e, nerva_config_test()) == 0, "chatworld stage5.1 init");
+    expect_true(chatworld_nerva_init(&e, &preload_cw) == 0, "chatworld stage5.1 preload cw init");
+    expect_true(chatworld_load_dataset(train_path, &train_ds) == 0,
+                "chatworld stage5.1 preload train load");
+    expect_true(chatworld_load_dataset(frozen_path, &frozen_ds) == 0,
+                "chatworld stage5.1 preload frozen load");
+    expect_true(chatworld_preload_dataset(&e, &preload_cw, &train_ds) == 0,
+                "chatworld stage5.1 preload train vocabulary");
+    expect_true(chatworld_preload_dataset(&e, &preload_cw, &frozen_ds) == 0,
+                "chatworld stage5.1 preload frozen vocabulary");
+
+    uint32_t node_count = e.node_count;
+    uint32_t edge_count = e.edge_count;
+    uint32_t name_count = e.name_count;
+
+    expect_true(chatworld_run(&e, &cfg, &result) == 0, "chatworld stage5.1 run");
+    expect_true(result.metrics.train_total == 80u, "chatworld stage5.1 training ran");
+    expect_true(result.metrics.train_correct > 0u, "chatworld stage5.1 train writes learn");
+    expect_true(result.metrics.eval_total == 4u, "chatworld stage5.1 eval ran");
+    expect_true(result.metrics.eval_correct == 4u, "chatworld stage5.1 held-out values pass");
+    expect_true(result.metrics.eval_mutations == 0u, "chatworld stage5.1 frozen has zero mutations");
+    expect_true(result.metrics.fallback_count == 0u, "chatworld stage5.1 has no ambiguity");
+    expect_true(e.node_count == node_count, "chatworld stage5.1 train/eval does not add nodes");
+    expect_true(e.edge_count == edge_count, "chatworld stage5.1 train/eval does not add edges");
+    expect_true(e.name_count == name_count, "chatworld stage5.1 train/eval does not add names");
+    nerva_engine_free(&e);
+
+    NervaEngine ablate_e;
+    ChatWorldConfig ablate_cfg = cfg;
+    ChatWorldResult ablated;
+    ablate_cfg.trace_path = ablate_trace_path;
+    ablate_cfg.ablate_response_edges = true;
+    expect_true(nerva_engine_init(&ablate_e, nerva_config_test()) == 0,
+                "chatworld stage5.1 ablate init");
+    expect_true(chatworld_run(&ablate_e, &ablate_cfg, &ablated) == 0,
+                "chatworld stage5.1 ablate run");
+    expect_true(ablated.metrics.eval_total == 4u, "chatworld stage5.1 ablate eval ran");
+    expect_true(ablated.metrics.eval_correct == 0u,
+                "chatworld stage5.1 learned-edge ablation collapses held-out values");
+    nerva_engine_free(&ablate_e);
+
+    f = fopen(trace_path, "r");
+    expect_true(f != NULL, "chatworld stage5.1 trace opens");
+    if (f) {
+        char line[768];
+        int saw_grace_write = 0;
+        int saw_grace_read = 0;
+        int saw_turing_write = 0;
+        int saw_turing_read = 0;
+        int saw_bad_frozen_support = 0;
+        int after_turing_write = 0;
+        int saw_stale_after_turing = 0;
+        while (fgets(line, sizeof(line), f)) {
+            if (strstr(line, "phase=frozen utterance=\"I am called Grace\"")) {
+                if (strstr(line, "fired_action=ACTION:MEM_WRITE") &&
+                    strstr(line, "frame=ACK") && strstr(line, "key=\"name\"") &&
+                    strstr(line, "value=\"grace\"") && strstr(line, "no_supported=0") &&
+                    strstr(line, "mutation_delta=0") && trace_line_has_edges(line)) {
+                    saw_grace_write = 1;
+                }
+            }
+            if (strstr(line, "phase=frozen utterance=\"call me Turing\"")) {
+                if (strstr(line, "fired_action=ACTION:MEM_WRITE") &&
+                    strstr(line, "frame=ACK") && strstr(line, "key=\"name\"") &&
+                    strstr(line, "value=\"turing\"") && strstr(line, "no_supported=0") &&
+                    strstr(line, "mutation_delta=0") && trace_line_has_edges(line)) {
+                    saw_turing_write = 1;
+                    after_turing_write = 1;
+                }
+            }
+            if (strstr(line, "phase=frozen utterance=\"what is my name\"")) {
+                if (strstr(line, "fired_action=ACTION:MEM_READ") &&
+                    strstr(line, "rendered=\"grace\"") && strstr(line, "value=\"grace\"") &&
+                    strstr(line, "no_supported=0") && strstr(line, "mutation_delta=0") &&
+                    trace_line_has_edges(line)) {
+                    saw_grace_read = 1;
+                }
+                if (strstr(line, "fired_action=ACTION:MEM_READ") &&
+                    strstr(line, "rendered=\"turing\"") && strstr(line, "value=\"turing\"") &&
+                    strstr(line, "no_supported=0") && strstr(line, "mutation_delta=0") &&
+                    trace_line_has_edges(line)) {
+                    saw_turing_read = 1;
+                }
+                if (after_turing_write &&
+                    (strstr(line, "rendered=\"ada\"") || strstr(line, "value=\"ada\"") ||
+                     strstr(line, "rendered=\"bob\"") || strstr(line, "value=\"bob\"") ||
+                     strstr(line, "rendered=\"grace\"") || strstr(line, "value=\"grace\""))) {
+                    saw_stale_after_turing = 1;
+                }
+            }
+            if (strstr(line, "phase=frozen") &&
+                (strstr(line, "no_supported=1") ||
+                 strstr(line, "frame=NO_SUPPORTED_RESPONSE"))) {
+                saw_bad_frozen_support = 1;
+            }
+        }
+        fclose(f);
+        expect_true(saw_grace_write, "chatworld stage5.1 trace shows held-out called write");
+        expect_true(saw_grace_read, "chatworld stage5.1 trace shows held-out called read");
+        expect_true(saw_turing_write, "chatworld stage5.1 trace shows held-out call-me write");
+        expect_true(saw_turing_read, "chatworld stage5.1 trace shows held-out call-me read");
+        expect_true(!saw_bad_frozen_support,
+                    "chatworld stage5.1 frozen turns have learned support");
+        expect_true(!saw_stale_after_turing,
+                    "chatworld stage5.1 final read does not leak older values");
+    }
+
+    f = fopen(ablate_trace_path, "r");
+    expect_true(f != NULL, "chatworld stage5.1 ablate trace opens");
+    if (f) {
+        char line[768];
+        uint32_t no_supported_frozen = 0;
+        while (fgets(line, sizeof(line), f)) {
+            if (strstr(line, "phase=frozen") && strstr(line, "no_supported=1") &&
+                strstr(line, "frame=NO_SUPPORTED_RESPONSE")) {
+                no_supported_frozen++;
+            }
+        }
+        fclose(f);
+        expect_true(no_supported_frozen == 4u,
+                    "chatworld stage5.1 ablation gives no-supported frozen turns");
+    }
+}
+
 static void test_chatworld_v14_learns_policy_and_memory(void) {
     NervaEngine e;
     ChatWorldConfig cfg;
@@ -948,6 +1107,7 @@ int test_chatworld_run(void) {
     test_chatworld_stage3_unknown_requires_learned_support();
     test_chatworld_stage4_correction_overrides_prior_value();
     test_chatworld_stage5_paraphrase_write_chunk_paths();
+    test_chatworld_stage5_1_held_out_paraphrase_values();
     test_chatworld_v14_learns_policy_and_memory();
     test_chatworld_unknown_query_does_not_read_arbitrary_memory();
     test_chatworld_frozen_eval_does_not_grow_graph();

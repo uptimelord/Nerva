@@ -41,7 +41,8 @@ Supported:
 - held-out entities on learned surface forms
 - learned unknown only when `ACTION:RESP_UNKNOWN` fires
 - trace-backed correction behavior
-- learned write paraphrases for the identity key, limited to trained chunks
+- learned write paraphrases for the identity key, with held-out values inside
+  trained chunks
 
 Not supported:
 

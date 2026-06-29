@@ -120,6 +120,31 @@ Kill if:
 - eval succeeds through a default binding fallback
 - eval creates candidate graph structure after the training phase
 
+## Stage 3.1 - Binding Discrimination Hardening
+
+Current candidate selection must distinguish unsupported memory reads from supported memory answers
+without adding intent, slot, or answer labels.
+
+Promote if:
+
+- memory-value scorer feedback requires both the expected value and expected surface key
+- unknown frozen queries do not answer with arbitrary remembered values
+- selected unknown behavior is trace-backed by learned support or a memory read that resolves to
+  `RESP_UNKNOWN`, not by fallback rendering
+- signed edge support is used so wrong feedback can suppress overbroad candidates
+- training resets conversational memory at episode boundaries while preserving learned graph weights
+- frozen eval remains mutation-free and graph-growth-free
+- ablation of learned surface/action edges drops frozen behavior
+
+Kill if:
+
+- unknown queries leak a stale identity/fact value
+- memory reads are counted correct only because the returned value matches while the selected key is
+  wrong
+- training success depends on carrying a previous epoch's memory table state
+- negative feedback is ignored during candidate scoring
+- the adapter emits semantic query or slot labels
+
 ## Claim Discipline
 
 ```text
@@ -127,7 +152,9 @@ Supported:     small dialogue policy and surface-bound memory/action-frame selec
                text events plus outcome feedback in ChatWorld-lite.
 Not supported: ChatGPT-like open-domain conversation; free-form prose generation; semantic parsing;
                broad language understanding; runtime LLM assistance.
-Evidence:      gate metrics, unit tests, frozen eval traces, mutation counts, ablation.
+Evidence:      gate metrics, unit tests, frozen eval traces with edge weights, mutation counts,
+               ablation.
 Residuals:     candidate frames and zero-weight edge skeleton are predeclared; memory binding
-               candidates are still mechanically enumerated from surface positions.
+               candidates are still mechanically enumerated from surface positions; training data
+               is still tiny and hand-authored.
 ```

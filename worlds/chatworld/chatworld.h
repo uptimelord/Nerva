@@ -15,6 +15,7 @@
 #define CHATWORLD_MEMORY_CAP 32u
 #define CHATWORLD_MAX_TURNS 64u
 #define CHATWORLD_MAX_CANDIDATE_LABEL 63u
+#define CHATWORLD_MAX_SELECTED_EDGES 48u
 
 typedef enum ChatWorldFrame {
     CHAT_FRAME_GREET = 0,
@@ -81,7 +82,10 @@ typedef struct ChatWorldNerva {
     uint32_t position[CHATWORLD_MAX_TOKENS];
     uint32_t action_node[CHAT_ACTION_COUNT];
     uint32_t token_node[CHATWORLD_MAX_TOKENS];
+    uint32_t token_at_node[CHATWORLD_MAX_TOKENS];
+    uint32_t pair_node[CHATWORLD_MAX_TOKENS];
     uint32_t token_count;
+    uint32_t pair_count;
     uint32_t policy_edge[CHATWORLD_MAX_TOKENS][CHAT_ACTION_COUNT];
 } ChatWorldNerva;
 
@@ -102,9 +106,9 @@ typedef struct ChatWorldDecision {
     char candidate[CHATWORLD_MAX_CANDIDATE_LABEL + 1u];
     char key[CHATWORLD_MAX_TOKEN_LEN + 1u];
     char value[CHATWORLD_MAX_TOKEN_LEN + 1u];
-    uint32_t score;
+    int32_t score;
     uint32_t selected_edge_count;
-    uint32_t selected_edges[CHATWORLD_MAX_TOKENS];
+    uint32_t selected_edges[CHATWORLD_MAX_SELECTED_EDGES];
     bool no_supported_response;
 } ChatWorldDecision;
 

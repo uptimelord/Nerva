@@ -9,10 +9,12 @@ frame selection, memory table, and trace-backed feedback loop. CLI parsing stays
 The first implementation is ChatWorld-lite:
 
 - surface tokens only
+- token-at-position and adjacent token-pair surface features
 - response-frame actions
 - mechanical candidate memory write/read actions
 - multiple surface-position binding candidates for memory actions
 - zero-weight policy edges at start
+- signed learned support for candidate selection
 - no fallback responder
 - no runtime LLM/API teacher
 - train/dev/frozen TSV datasets under `datasets/`

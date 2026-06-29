@@ -384,7 +384,7 @@ static int chatworld_emit_surface_internal(NervaEngine *e, ChatWorldNerva *cw,
     chatworld_emit_node(e, cw->turn_start);
     chatworld_emit_node(e, cw->speaker_user);
 
-    char name[80];
+    char name[128];
     for (uint32_t i = 0; i < count; ++i) {
         snprintf(name, sizeof(name), "TOKEN:%.*s", (int)CHATWORLD_MAX_TOKEN_LEN, tokens[i]);
         cw->token_node[i] =
@@ -394,9 +394,33 @@ static int chatworld_emit_surface_internal(NervaEngine *e, ChatWorldNerva *cw,
         }
         chatworld_emit_node(e, cw->token_node[i]);
         chatworld_emit_node(e, cw->position[i]);
+
+        snprintf(name, sizeof(name), "TOKEN_AT:%u:%.*s", i, (int)CHATWORLD_MAX_TOKEN_LEN,
+                 tokens[i]);
+        cw->token_at_node[i] =
+            create_graph ? chatworld_get_or_create(e, name) : nerva_find_node_by_name(e, name);
+        if (create_graph && cw->token_at_node[i] == UINT32_MAX) {
+            return -1;
+        }
+        chatworld_emit_node(e, cw->token_at_node[i]);
     }
     for (uint32_t i = count; i < CHATWORLD_MAX_TOKENS; ++i) {
         cw->token_node[i] = UINT32_MAX;
+        cw->token_at_node[i] = UINT32_MAX;
+    }
+    cw->pair_count = count > 0u ? count - 1u : 0u;
+    for (uint32_t i = 0; i < cw->pair_count; ++i) {
+        snprintf(name, sizeof(name), "PAIR:%.*s:%.*s", (int)CHATWORLD_MAX_TOKEN_LEN, tokens[i],
+                 (int)CHATWORLD_MAX_TOKEN_LEN, tokens[i + 1u]);
+        cw->pair_node[i] =
+            create_graph ? chatworld_get_or_create(e, name) : nerva_find_node_by_name(e, name);
+        if (create_graph && cw->pair_node[i] == UINT32_MAX) {
+            return -1;
+        }
+        chatworld_emit_node(e, cw->pair_node[i]);
+    }
+    for (uint32_t i = cw->pair_count; i < CHATWORLD_MAX_TOKENS; ++i) {
+        cw->pair_node[i] = UINT32_MAX;
     }
     chatworld_emit_node(e, cw->turn_end);
 
@@ -590,26 +614,38 @@ static ChatWorldFrame chatworld_frame_for_action(ChatWorldAction action) {
     }
 }
 
-static uint32_t chatworld_candidate_score(const NervaEngine *e, const ChatWorldNerva *cw,
-                                          const ChatWorldCandidate *candidate, uint32_t *selected,
-                                          uint32_t *selected_count) {
-    uint32_t score = 0;
+static int32_t chatworld_candidate_score(const NervaEngine *e, const ChatWorldNerva *cw,
+                                         const ChatWorldCandidate *candidate, uint32_t *selected,
+                                         uint32_t *selected_count) {
+    int32_t score = 0;
     *selected_count = 0;
+    uint32_t feature_nodes[CHATWORLD_MAX_TOKENS * 3u];
+    uint32_t feature_count = 0;
     for (uint32_t i = 0; i < cw->token_count; ++i) {
-        if (cw->token_node[i] == UINT32_MAX || candidate->action_node == UINT32_MAX) {
+        if (cw->token_node[i] != UINT32_MAX && feature_count < sizeof(feature_nodes) / sizeof(feature_nodes[0])) {
+            feature_nodes[feature_count++] = cw->token_node[i];
+        }
+        if (cw->token_at_node[i] != UINT32_MAX && feature_count < sizeof(feature_nodes) / sizeof(feature_nodes[0])) {
+            feature_nodes[feature_count++] = cw->token_at_node[i];
+        }
+    }
+    for (uint32_t i = 0; i < cw->pair_count; ++i) {
+        if (cw->pair_node[i] != UINT32_MAX && feature_count < sizeof(feature_nodes) / sizeof(feature_nodes[0])) {
+            feature_nodes[feature_count++] = cw->pair_node[i];
+        }
+    }
+
+    for (uint32_t i = 0; i < feature_count; ++i) {
+        if (candidate->action_node == UINT32_MAX) {
             continue;
         }
-        uint32_t edge_id = chatworld_find_surface_edge(e, cw->token_node[i],
-                                                       candidate->action_node);
+        uint32_t edge_id = chatworld_find_surface_edge(e, feature_nodes[i], candidate->action_node);
         if (edge_id == UINT32_MAX || edge_id >= e->edge_count) {
             continue;
         }
         int32_t w = e->edges[edge_id].weight;
-        if (w <= 0) {
-            continue;
-        }
-        score += (uint32_t)w;
-        if (*selected_count < CHATWORLD_MAX_TOKENS) {
+        score += w;
+        if (*selected_count < CHATWORLD_MAX_SELECTED_EDGES) {
             selected[*selected_count] = edge_id;
             (*selected_count)++;
         }
@@ -656,9 +692,10 @@ static int chatworld_response_is_correct(const ChatWorldDecision *d, const ChatW
         }
         return d->action == CHAT_ACTION_RESP_ACK && d->frame == CHAT_FRAME_ACK;
     case CHAT_EXPECT_UNKNOWN:
-        return d->action == CHAT_ACTION_RESP_UNKNOWN && d->frame == CHAT_FRAME_UNKNOWN;
+        return d->frame == CHAT_FRAME_UNKNOWN;
     case CHAT_EXPECT_MEMORY_VALUE:
         return d->action == CHAT_ACTION_MEM_READ_PAIR && d->frame == CHAT_FRAME_ANSWER_MEMORY &&
+               turn->expected_key[0] != '\0' && strcmp(d->key, turn->expected_key) == 0 &&
                turn->expected_value[0] != '\0' &&
                strcmp(d->value, turn->expected_value) == 0;
     default:
@@ -666,22 +703,27 @@ static int chatworld_response_is_correct(const ChatWorldDecision *d, const ChatW
     }
 }
 
-static void chatworld_trace_decision(FILE *trace_out, const char *phase, const ChatWorldTurn *turn,
-                                     const ChatWorldDecision *d, int correct,
+static void chatworld_trace_decision(const NervaEngine *e, FILE *trace_out, const char *phase,
+                                     const ChatWorldTurn *turn, const ChatWorldDecision *d, int correct,
                                      uint32_t mutation_delta) {
-    if (!trace_out || !phase || !turn || !d) {
+    if (!e || !trace_out || !phase || !turn || !d) {
         return;
     }
     fprintf(trace_out,
             "phase=%s utterance=\"%s\" expected=%u selected_action=%s selected_frame=%s "
-            "candidate=\"%s\" score=%u no_supported=%u correct=%d mutation_delta=%u "
+            "candidate=\"%s\" score=%d no_supported=%u correct=%d mutation_delta=%u "
             "key=\"%s\" value=\"%s\" selected_edges=",
             phase, turn->utterance, (unsigned)turn->expected,
             d->action < CHAT_ACTION_COUNT ? chatworld_action_name(d->action) : "NO_ACTION",
             chatworld_frame_name(d->frame), d->candidate, d->score,
             d->no_supported_response ? 1u : 0u, correct, mutation_delta, d->key, d->value);
     for (uint32_t i = 0; i < d->selected_edge_count; ++i) {
-        fprintf(trace_out, "%s%u", i == 0u ? "" : ",", d->selected_edges[i]);
+        uint32_t edge_id = d->selected_edges[i];
+        int32_t weight = 0;
+        if (edge_id < e->edge_count) {
+            weight = e->edges[edge_id].weight;
+        }
+        fprintf(trace_out, "%s%u:%d", i == 0u ? "" : ",", edge_id, weight);
     }
     fputc('\n', trace_out);
 }
@@ -708,15 +750,15 @@ static ChatWorldDecision chatworld_step_internal(NervaEngine *e, ChatWorldNerva 
     chatworld_build_candidates(e, cw, tokens, count, &candidates, allow_explore);
     nerva_graph_rebuild_adjacency(e);
 
-    uint32_t best_edges[CHATWORLD_MAX_TOKENS];
+    uint32_t best_edges[CHATWORLD_MAX_SELECTED_EDGES];
     uint32_t best_edge_count = 0;
-    uint32_t best_score = 0;
+    int32_t best_score = 0;
     uint32_t best_index = UINT32_MAX;
 
     for (uint32_t ci = 0; ci < candidates.count; ++ci) {
-        uint32_t edges[CHATWORLD_MAX_TOKENS];
+        uint32_t edges[CHATWORLD_MAX_SELECTED_EDGES];
         uint32_t edge_count = 0;
-        uint32_t score = chatworld_candidate_score(e, cw, &candidates.items[ci], edges, &edge_count);
+        int32_t score = chatworld_candidate_score(e, cw, &candidates.items[ci], edges, &edge_count);
         if (score > best_score) {
             best_score = score;
             best_index = ci;
@@ -733,21 +775,33 @@ static ChatWorldDecision chatworld_step_internal(NervaEngine *e, ChatWorldNerva 
             return d;
         }
         uint32_t explored = explore_seed % candidates.count;
-        if (best_score == 0 || (explore_seed % 3u) != 0u) {
+        if (best_score <= 0) {
             best_index = explored;
-            best_score = 1u;
+            best_score = 1;
             best_edge_count = 0;
             for (uint32_t i = 0; i < cw->token_count; ++i) {
                 uint32_t edge_id = chatworld_create_edge(e, cw->token_node[i],
                                                          candidates.items[best_index].action_node);
-                if (edge_id != UINT32_MAX && best_edge_count < CHATWORLD_MAX_TOKENS) {
+                if (edge_id != UINT32_MAX && best_edge_count < CHATWORLD_MAX_SELECTED_EDGES) {
+                    best_edges[best_edge_count++] = edge_id;
+                }
+                edge_id = chatworld_create_edge(e, cw->token_at_node[i],
+                                                candidates.items[best_index].action_node);
+                if (edge_id != UINT32_MAX && best_edge_count < CHATWORLD_MAX_SELECTED_EDGES) {
+                    best_edges[best_edge_count++] = edge_id;
+                }
+            }
+            for (uint32_t i = 0; i < cw->pair_count; ++i) {
+                uint32_t edge_id = chatworld_create_edge(e, cw->pair_node[i],
+                                                         candidates.items[best_index].action_node);
+                if (edge_id != UINT32_MAX && best_edge_count < CHATWORLD_MAX_SELECTED_EDGES) {
                     best_edges[best_edge_count++] = edge_id;
                 }
             }
         }
     }
 
-    if (best_score == 0 || best_index == UINT32_MAX) {
+    if (best_score <= 0 || best_index == UINT32_MAX) {
         if (!allow_explore) {
             d.no_supported_response = true;
             return d;
@@ -787,7 +841,7 @@ static void chatworld_train_turn(NervaEngine *e, ChatWorldNerva *cw, ChatWorld *
         nerva_apply_mutations(e);
     }
     uint32_t mutation_delta = (uint32_t)(e->debug.mutations_applied - before);
-    chatworld_trace_decision(trace_out, "train", turn, &d, correct, mutation_delta);
+    chatworld_trace_decision(e, trace_out, "train", turn, &d, correct, mutation_delta);
     if (trace_out) {
         m->decision_trace_count++;
     }
@@ -817,7 +871,7 @@ static void chatworld_eval_turn(NervaEngine *e, ChatWorldNerva *cw, ChatWorld *w
     uint64_t after = e->debug.mutations_applied;
     int correct = chatworld_response_is_correct(&d, turn);
     uint32_t mutation_delta = (uint32_t)(after - before);
-    chatworld_trace_decision(trace_out, "frozen", turn, &d, correct, mutation_delta);
+    chatworld_trace_decision(e, trace_out, "frozen", turn, &d, correct, mutation_delta);
     if (trace_out) {
         m->decision_trace_count++;
     }
@@ -893,6 +947,7 @@ int chatworld_run(NervaEngine *e, const ChatWorldConfig *cfg, ChatWorldResult *o
 
     if (cfg->train) {
         for (uint32_t epoch = 0; epoch < cfg->train_epochs; ++epoch) {
+            chatworld_reset(&w);
             for (uint32_t i = 0; i < train_ds.count; ++i) {
                 uint32_t explore_seed = cfg->seed + epoch * train_ds.count + i;
                 chatworld_train_turn(e, &cw, &w, &train_ds.turns[i], &out->metrics, explore_seed,
@@ -906,6 +961,7 @@ int chatworld_run(NervaEngine *e, const ChatWorldConfig *cfg, ChatWorldResult *o
     }
 
     if (cfg->eval) {
+        chatworld_reset(&w);
         uint32_t eval_count = frozen_ds.count;
         if (cfg->eval_episodes > 0u && cfg->eval_episodes < eval_count) {
             eval_count = cfg->eval_episodes;

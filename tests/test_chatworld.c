@@ -91,6 +91,7 @@ static void test_chatworld_lite_learns_policy_and_memory(void) {
     expect_true(result.metrics.eval_total > 0u, "chatworld eval ran");
     expect_true(result.metrics.eval_correct * 100u >= result.metrics.eval_total * 60u,
                 "chatworld eval accuracy >=60% after candidate binding");
+    expect_true(result.metrics.eval_correct >= 6u, "chatworld answers hardened frozen cases");
     expect_true(result.metrics.eval_correct >= result.metrics.eval_baseline_correct + 2u,
                 "chatworld beats unknown baseline");
     expect_true(result.metrics.eval_mutations == 0u, "chatworld frozen eval has zero mutations");
@@ -102,6 +103,41 @@ static void test_chatworld_lite_learns_policy_and_memory(void) {
     expect_true(result.metrics.binding_candidate_count > 0u,
                 "chatworld selects learned binding candidates");
     nerva_engine_free(&e);
+}
+
+static void test_chatworld_unknown_query_does_not_read_arbitrary_memory(void) {
+    NervaEngine e;
+    ChatWorldConfig cfg;
+    ChatWorldResult result;
+    const char *trace_path = "build/chatworld_unknown_trace_test.log";
+    chatworld_config_defaults(&cfg);
+    cfg.train_epochs = 40u;
+    cfg.trace_path = trace_path;
+
+    expect_true(nerva_engine_init(&e, nerva_config_test()) == 0, "chatworld unknown init");
+    expect_true(chatworld_run(&e, &cfg, &result) == 0, "chatworld unknown run");
+    expect_true(result.metrics.eval_correct >= 6u, "chatworld unknown run passes frozen gate");
+    nerva_engine_free(&e);
+
+    FILE *f = fopen(trace_path, "r");
+    expect_true(f != NULL, "chatworld unknown trace opens");
+    if (f) {
+        char line[512];
+        int saw_unknown = 0;
+        int saw_bad_memory_value = 0;
+        while (fgets(line, sizeof(line), f)) {
+            if (strstr(line, "phase=frozen utterance=\"what is my favorite color\"")) {
+                saw_unknown = 1;
+                if (!strstr(line, "selected_frame=RESP_UNKNOWN") || strstr(line, "value=\"grace\"") ||
+                    strstr(line, "value=\"mira\"") || strstr(line, "value=\"ada\"")) {
+                    saw_bad_memory_value = 1;
+                }
+            }
+        }
+        fclose(f);
+        expect_true(saw_unknown, "trace includes unknown frozen query");
+        expect_true(!saw_bad_memory_value, "unknown query does not answer arbitrary memory");
+    }
 }
 
 static void test_chatworld_frozen_eval_does_not_grow_graph(void) {
@@ -215,6 +251,7 @@ int test_chatworld_run(void) {
     test_chatworld_dataset_files_load();
     test_chatworld_zero_score_eval_has_no_fallback();
     test_chatworld_lite_learns_policy_and_memory();
+    test_chatworld_unknown_query_does_not_read_arbitrary_memory();
     test_chatworld_frozen_eval_does_not_grow_graph();
     test_chatworld_trace_artifact_records_decisions();
     test_chatworld_ablation_drops_eval();

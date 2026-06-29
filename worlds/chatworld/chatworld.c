@@ -13,34 +13,14 @@
 
 #include <ctype.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define CHAT_REL_SURFACE_TO_ACTION ((uint16_t)(NERVA_REL_CUSTOM_BASE + 40u))
 
-static const ChatWorldTurn CHAT_TRAIN_TURNS[] = {
-    {"hello", CHAT_EXPECT_GREET, NULL, NULL, true},
-    {"hi", CHAT_EXPECT_GREET, NULL, NULL, true},
-    {"thanks", CHAT_EXPECT_ACK, NULL, NULL, true},
-    {"thank you", CHAT_EXPECT_ACK, NULL, NULL, true},
-    {"what is my favorite food", CHAT_EXPECT_UNKNOWN, NULL, NULL, true},
-    {"my name is Ada", CHAT_EXPECT_ACK, "name", "ada", true},
-    {"what is my name", CHAT_EXPECT_MEMORY_VALUE, "name", "ada", true},
-    {"poodle is dog", CHAT_EXPECT_ACK, "poodle", "dog", true},
-    {"what is poodle", CHAT_EXPECT_MEMORY_VALUE, "poodle", "dog", true},
-    {"no my name is Grace", CHAT_EXPECT_ACK, "name", "grace", true},
-    {"what is my name", CHAT_EXPECT_MEMORY_VALUE, "name", "grace", true},
-};
-
-static const ChatWorldTurn CHAT_EVAL_TURNS[] = {
-    {"hey", CHAT_EXPECT_GREET, NULL, NULL, false},
-    {"hello there", CHAT_EXPECT_GREET, NULL, NULL, false},
-    {"thank you kindly", CHAT_EXPECT_ACK, NULL, NULL, false},
-    {"what is my favorite color", CHAT_EXPECT_UNKNOWN, NULL, NULL, false},
-    {"my name is Mira", CHAT_EXPECT_ACK, "name", "mira", true},
-    {"what is my name", CHAT_EXPECT_MEMORY_VALUE, "name", "mira", false},
-    {"sparrow is bird", CHAT_EXPECT_ACK, "sparrow", "bird", true},
-    {"what is sparrow", CHAT_EXPECT_MEMORY_VALUE, "sparrow", "bird", false},
-};
+#define CHATWORLD_DEFAULT_TRAIN_PATH "worlds/chatworld/datasets/train.tsv"
+#define CHATWORLD_DEFAULT_DEV_PATH "worlds/chatworld/datasets/dev.tsv"
+#define CHATWORLD_DEFAULT_FROZEN_PATH "worlds/chatworld/datasets/frozen.tsv"
 
 static void chatworld_copy_token(char *dst, const char *src) {
     uint32_t i = 0;
@@ -104,9 +84,97 @@ void chatworld_config_defaults(ChatWorldConfig *cfg) {
     memset(cfg, 0, sizeof(*cfg));
     cfg->seed = 1u;
     cfg->train_epochs = 20u;
-    cfg->eval_episodes = (uint32_t)(sizeof(CHAT_EVAL_TURNS) / sizeof(CHAT_EVAL_TURNS[0]));
     cfg->train = true;
     cfg->eval = true;
+    cfg->train_path = CHATWORLD_DEFAULT_TRAIN_PATH;
+    cfg->dev_path = CHATWORLD_DEFAULT_DEV_PATH;
+    cfg->frozen_path = CHATWORLD_DEFAULT_FROZEN_PATH;
+}
+
+static void chatworld_copy_field(char *dst, size_t dst_size, const char *src) {
+    if (!dst || dst_size == 0u) {
+        return;
+    }
+    if (!src) {
+        dst[0] = '\0';
+        return;
+    }
+    size_t i = 0;
+    while (src[i] != '\0' && src[i] != '\r' && src[i] != '\n' && i + 1u < dst_size) {
+        dst[i] = src[i];
+        i++;
+    }
+    dst[i] = '\0';
+}
+
+static ChatWorldExpected chatworld_expected_from_string(const char *s) {
+    if (!s) {
+        return CHAT_EXPECT_NONE;
+    }
+    if (strcmp(s, "GREET") == 0) {
+        return CHAT_EXPECT_GREET;
+    }
+    if (strcmp(s, "ACK") == 0) {
+        return CHAT_EXPECT_ACK;
+    }
+    if (strcmp(s, "UNKNOWN") == 0) {
+        return CHAT_EXPECT_UNKNOWN;
+    }
+    if (strcmp(s, "MEMORY_VALUE") == 0) {
+        return CHAT_EXPECT_MEMORY_VALUE;
+    }
+    return CHAT_EXPECT_NONE;
+}
+
+int chatworld_load_dataset(const char *path, ChatWorldDataset *out) {
+    if (!path || !out) {
+        return -1;
+    }
+    memset(out, 0, sizeof(*out));
+    FILE *f = fopen(path, "r");
+    if (!f) {
+        return -1;
+    }
+
+    char line[384];
+    while (fgets(line, sizeof(line), f)) {
+        if (line[0] == '\0' || line[0] == '#' || line[0] == '\r' || line[0] == '\n') {
+            continue;
+        }
+        if (out->count >= CHATWORLD_MAX_TURNS) {
+            fclose(f);
+            return -1;
+        }
+
+        char *fields[5] = {0};
+        char *cursor = line;
+        for (uint32_t i = 0; i < 5u; ++i) {
+            fields[i] = cursor;
+            char *tab = strchr(cursor, '\t');
+            if (tab) {
+                *tab = '\0';
+                cursor = tab + 1;
+            } else if (i < 4u) {
+                fclose(f);
+                return -1;
+            }
+        }
+
+        ChatWorldTurn *t = &out->turns[out->count];
+        chatworld_copy_field(t->utterance, sizeof(t->utterance), fields[0]);
+        t->expected = chatworld_expected_from_string(fields[1]);
+        chatworld_copy_field(t->expected_key, sizeof(t->expected_key), fields[2]);
+        chatworld_copy_field(t->expected_value, sizeof(t->expected_value), fields[3]);
+        t->learn = fields[4] && strtoul(fields[4], NULL, 10) != 0u;
+        if (t->utterance[0] == '\0' || t->expected == CHAT_EXPECT_NONE) {
+            fclose(f);
+            return -1;
+        }
+        out->count++;
+    }
+
+    fclose(f);
+    return out->count > 0u ? 0 : -1;
 }
 
 void chatworld_reset(ChatWorld *w) {
@@ -471,7 +539,7 @@ static int chatworld_response_is_correct(const ChatWorldDecision *d, const ChatW
     case CHAT_EXPECT_GREET:
         return d->action == CHAT_ACTION_RESP_GREET && d->frame == CHAT_FRAME_GREET;
     case CHAT_EXPECT_ACK:
-        if (turn->expected_key && turn->expected_value) {
+        if (turn->expected_key[0] != '\0' && turn->expected_value[0] != '\0') {
             return d->action == CHAT_ACTION_MEM_WRITE_PAIR && d->frame == CHAT_FRAME_ACK &&
                    strcmp(d->key, turn->expected_key) == 0 &&
                    strcmp(d->value, turn->expected_value) == 0;
@@ -481,11 +549,31 @@ static int chatworld_response_is_correct(const ChatWorldDecision *d, const ChatW
         return d->action == CHAT_ACTION_RESP_UNKNOWN && d->frame == CHAT_FRAME_UNKNOWN;
     case CHAT_EXPECT_MEMORY_VALUE:
         return d->action == CHAT_ACTION_MEM_READ_PAIR && d->frame == CHAT_FRAME_ANSWER_MEMORY &&
-               turn->expected_value &&
+               turn->expected_value[0] != '\0' &&
                strcmp(d->value, turn->expected_value) == 0;
     default:
         return 0;
     }
+}
+
+static void chatworld_trace_decision(FILE *trace_out, const char *phase, const ChatWorldTurn *turn,
+                                     const ChatWorldDecision *d, int correct,
+                                     uint32_t mutation_delta) {
+    if (!trace_out || !phase || !turn || !d) {
+        return;
+    }
+    fprintf(trace_out,
+            "phase=%s utterance=\"%s\" expected=%u selected_action=%s selected_frame=%s "
+            "score=%u no_supported=%u correct=%d mutation_delta=%u key=\"%s\" value=\"%s\" "
+            "selected_edges=",
+            phase, turn->utterance, (unsigned)turn->expected,
+            d->action < CHAT_ACTION_COUNT ? chatworld_action_name(d->action) : "NO_ACTION",
+            chatworld_frame_name(d->frame), d->score, d->no_supported_response ? 1u : 0u,
+            correct, mutation_delta, d->key, d->value);
+    for (uint32_t i = 0; i < d->selected_edge_count; ++i) {
+        fprintf(trace_out, "%s%u", i == 0u ? "" : ",", d->selected_edges[i]);
+    }
+    fputc('\n', trace_out);
 }
 
 ChatWorldDecision chatworld_step(NervaEngine *e, ChatWorldNerva *cw, ChatWorld *w,
@@ -585,9 +673,10 @@ static ChatWorldDecision chatworld_step_internal(NervaEngine *e, ChatWorldNerva 
 
 static void chatworld_train_turn(NervaEngine *e, ChatWorldNerva *cw, ChatWorld *w,
                                  const ChatWorldTurn *turn, ChatWorldMetrics *m,
-                                 uint32_t explore_seed) {
+                                 uint32_t explore_seed, FILE *trace_out) {
     ChatWorldDecision d = chatworld_step_internal(e, cw, w, turn, 1, explore_seed);
     int correct = chatworld_response_is_correct(&d, turn);
+    uint64_t before = e->debug.mutations_applied;
 
     if (!d.no_supported_response) {
         if (correct) {
@@ -596,6 +685,11 @@ static void chatworld_train_turn(NervaEngine *e, ChatWorldNerva *cw, ChatWorld *
             nerva_feedback_wrong(e);
         }
         nerva_apply_mutations(e);
+    }
+    uint32_t mutation_delta = (uint32_t)(e->debug.mutations_applied - before);
+    chatworld_trace_decision(trace_out, "train", turn, &d, correct, mutation_delta);
+    if (trace_out) {
+        m->decision_trace_count++;
     }
 
     m->train_total++;
@@ -614,11 +708,17 @@ static void chatworld_train_turn(NervaEngine *e, ChatWorldNerva *cw, ChatWorld *
 }
 
 static void chatworld_eval_turn(NervaEngine *e, ChatWorldNerva *cw, ChatWorld *w,
-                                const ChatWorldTurn *turn, ChatWorldMetrics *m) {
+                                const ChatWorldTurn *turn, ChatWorldMetrics *m,
+                                FILE *trace_out) {
     uint64_t before = e->debug.mutations_applied;
     ChatWorldDecision d = chatworld_step(e, cw, w, turn);
     uint64_t after = e->debug.mutations_applied;
     int correct = chatworld_response_is_correct(&d, turn);
+    uint32_t mutation_delta = (uint32_t)(after - before);
+    chatworld_trace_decision(trace_out, "frozen", turn, &d, correct, mutation_delta);
+    if (trace_out) {
+        m->decision_trace_count++;
+    }
 
     m->eval_total++;
     if (correct) {
@@ -636,7 +736,7 @@ static void chatworld_eval_turn(NervaEngine *e, ChatWorldNerva *cw, ChatWorld *w
     if (d.action == CHAT_ACTION_MEM_READ_PAIR) {
         m->memory_read_count++;
     }
-    m->eval_mutations += (uint32_t)(after - before);
+    m->eval_mutations += mutation_delta;
 }
 
 static void chatworld_zero_response_edges(NervaEngine *e) {
@@ -659,20 +759,40 @@ int chatworld_run(NervaEngine *e, const ChatWorldConfig *cfg, ChatWorldResult *o
 
     ChatWorldNerva cw;
     ChatWorld w;
+    ChatWorldDataset train_ds;
+    ChatWorldDataset frozen_ds;
+    memset(&train_ds, 0, sizeof(train_ds));
+    memset(&frozen_ds, 0, sizeof(frozen_ds));
+
+    if (cfg->train && chatworld_load_dataset(cfg->train_path, &train_ds) != 0) {
+        return -1;
+    }
+    if (cfg->eval && chatworld_load_dataset(cfg->frozen_path, &frozen_ds) != 0) {
+        return -1;
+    }
+
     chatworld_reset(&w);
     if (chatworld_nerva_init(e, &cw) != 0) {
         return -1;
     }
 
+    FILE *trace_out = NULL;
+    if (cfg->trace_path) {
+        trace_out = fopen(cfg->trace_path, "w");
+        if (!trace_out) {
+            return -1;
+        }
+        fprintf(trace_out, "chatworld_trace_v1=1\n");
+        fprintf(trace_out, "train_path=%s\n", cfg->train_path ? cfg->train_path : "");
+        fprintf(trace_out, "frozen_path=%s\n", cfg->frozen_path ? cfg->frozen_path : "");
+    }
+
     if (cfg->train) {
         for (uint32_t epoch = 0; epoch < cfg->train_epochs; ++epoch) {
-            for (uint32_t i = 0; i < sizeof(CHAT_TRAIN_TURNS) / sizeof(CHAT_TRAIN_TURNS[0]); ++i) {
-                uint32_t explore_seed =
-                    cfg->seed + epoch * (uint32_t)(sizeof(CHAT_TRAIN_TURNS) /
-                                                   sizeof(CHAT_TRAIN_TURNS[0])) +
-                    i;
-                chatworld_train_turn(e, &cw, &w, &CHAT_TRAIN_TURNS[i], &out->metrics,
-                                     explore_seed);
+            for (uint32_t i = 0; i < train_ds.count; ++i) {
+                uint32_t explore_seed = cfg->seed + epoch * train_ds.count + i;
+                chatworld_train_turn(e, &cw, &w, &train_ds.turns[i], &out->metrics, explore_seed,
+                                     trace_out);
             }
         }
     }
@@ -682,8 +802,12 @@ int chatworld_run(NervaEngine *e, const ChatWorldConfig *cfg, ChatWorldResult *o
     }
 
     if (cfg->eval) {
-        for (uint32_t i = 0; i < sizeof(CHAT_EVAL_TURNS) / sizeof(CHAT_EVAL_TURNS[0]); ++i) {
-            chatworld_eval_turn(e, &cw, &w, &CHAT_EVAL_TURNS[i], &out->metrics);
+        uint32_t eval_count = frozen_ds.count;
+        if (cfg->eval_episodes > 0u && cfg->eval_episodes < eval_count) {
+            eval_count = cfg->eval_episodes;
+        }
+        for (uint32_t i = 0; i < eval_count; ++i) {
+            chatworld_eval_turn(e, &cw, &w, &frozen_ds.turns[i], &out->metrics, trace_out);
         }
     }
 
@@ -693,6 +817,9 @@ int chatworld_run(NervaEngine *e, const ChatWorldConfig *cfg, ChatWorldResult *o
     }
 
     out->metrics.trace_count = e->trace_count;
+    if (trace_out) {
+        fclose(trace_out);
+    }
     return 0;
 }
 
@@ -726,4 +853,5 @@ void chatworld_print_metrics(const ChatWorldMetrics *m, FILE *out) {
     fprintf(out, "memory_write_count=%u\n", m->memory_write_count);
     fprintf(out, "memory_read_count=%u\n", m->memory_read_count);
     fprintf(out, "trace_count=%u\n", m->trace_count);
+    fprintf(out, "decision_trace_count=%u\n", m->decision_trace_count);
 }

@@ -1,6 +1,6 @@
 # ChatWorld-lite Gate
 
-**Status:** Draft
+**Status:** Draft/Repeat; not promoted
 **World:** `worlds/chatworld/`
 
 ChatWorld-lite tests whether Nerva can learn a small dialogue policy from surface text events,
@@ -32,6 +32,13 @@ Forbidden adapter emissions:
 
 `RESP_UNKNOWN` is a normal response frame only when selected by learned graph support. If all response
 scores are zero in frozen eval, the world must return `NO_SUPPORTED_RESPONSE`.
+
+Frozen split discipline:
+
+- train/dev/frozen turns live in `worlds/chatworld/datasets/*.tsv`
+- frozen data is loaded from file before evaluation
+- do not edit frozen data after inspecting model behavior
+- expected fields are scorer-only labels and must not be emitted as Nerva events
 
 ## Stage 1 - Surface Adapter Discipline
 
@@ -84,6 +91,7 @@ Promote if:
 - fallback count is zero
 - traces show input tokens -> fired edges -> selected action/frame -> outcome feedback -> queued
   mutations during training
+- ChatWorld decision trace is saved for evidence
 
 Kill if:
 

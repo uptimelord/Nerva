@@ -1,0 +1,12 @@
+# utterance	expected	key	value	learn
+hello	GREET			1
+hi	GREET			1
+thanks	ACK			1
+thank you	ACK			1
+what is my favorite food	UNKNOWN			1
+my name is Ada	ACK	name	ada	1
+what is my name	MEMORY_VALUE	name	ada	1
+poodle is dog	ACK	poodle	dog	1
+what is poodle	MEMORY_VALUE	poodle	dog	1
+no my name is Grace	ACK	name	grace	1
+what is my name	MEMORY_VALUE	name	grace	1

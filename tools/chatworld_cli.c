@@ -16,6 +16,9 @@ static void print_usage(const char *prog) {
     printf("  --train-epochs N    training epochs (default 20)\n");
     printf("  --seed N            deterministic seed (default 1)\n");
     printf("  --ablate            zero learned response edges before eval\n");
+    printf("  --train-data PATH   train dataset TSV\n");
+    printf("  --frozen-data PATH  frozen eval dataset TSV\n");
+    printf("  --trace PATH        write ChatWorld decision trace\n");
 }
 
 int main(int argc, char **argv) {
@@ -41,6 +44,12 @@ int main(int argc, char **argv) {
             cfg.seed = (uint32_t)strtoul(argv[++i], NULL, 10);
         } else if (strcmp(argv[i], "--ablate") == 0) {
             cfg.ablate_response_edges = true;
+        } else if (strcmp(argv[i], "--train-data") == 0 && i + 1 < argc) {
+            cfg.train_path = argv[++i];
+        } else if (strcmp(argv[i], "--frozen-data") == 0 && i + 1 < argc) {
+            cfg.frozen_path = argv[++i];
+        } else if (strcmp(argv[i], "--trace") == 0 && i + 1 < argc) {
+            cfg.trace_path = argv[++i];
         } else {
             fprintf(stderr, "Unknown option: %s\n", argv[i]);
             print_usage(prog);

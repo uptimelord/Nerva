@@ -13,6 +13,7 @@
 #define CHATWORLD_MAX_TOKENS 12u
 #define CHATWORLD_MAX_TOKEN_LEN 31u
 #define CHATWORLD_MEMORY_CAP 32u
+#define CHATWORLD_MAX_TURNS 64u
 
 typedef enum ChatWorldFrame {
     CHAT_FRAME_GREET = 0,
@@ -52,15 +53,24 @@ typedef struct ChatWorldConfig {
     bool eval;
     bool ablate_response_edges;
     bool trace;
+    const char *train_path;
+    const char *dev_path;
+    const char *frozen_path;
+    const char *trace_path;
 } ChatWorldConfig;
 
 typedef struct ChatWorldTurn {
-    const char *utterance;
+    char utterance[128];
     ChatWorldExpected expected;
-    const char *expected_key;
-    const char *expected_value;
+    char expected_key[CHATWORLD_MAX_TOKEN_LEN + 1u];
+    char expected_value[CHATWORLD_MAX_TOKEN_LEN + 1u];
     bool learn;
 } ChatWorldTurn;
+
+typedef struct ChatWorldDataset {
+    ChatWorldTurn turns[CHATWORLD_MAX_TURNS];
+    uint32_t count;
+} ChatWorldDataset;
 
 typedef struct ChatWorldNerva {
     uint32_t turn_start;
@@ -109,6 +119,7 @@ typedef struct ChatWorldMetrics {
     uint32_t memory_write_count;
     uint32_t memory_read_count;
     uint32_t trace_count;
+    uint32_t decision_trace_count;
     uint32_t response_ablation_correct;
     uint32_t response_ablation_total;
 } ChatWorldMetrics;
@@ -118,6 +129,7 @@ typedef struct ChatWorldResult {
 } ChatWorldResult;
 
 void chatworld_config_defaults(ChatWorldConfig *cfg);
+int chatworld_load_dataset(const char *path, ChatWorldDataset *out);
 int chatworld_nerva_init(NervaEngine *e, ChatWorldNerva *cw);
 void chatworld_reset(ChatWorld *w);
 int chatworld_tokenize(const char *utterance,

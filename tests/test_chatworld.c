@@ -50,11 +50,27 @@ static void test_chatworld_surface_adapter_no_oracle_labels(void) {
     nerva_engine_free(&e);
 }
 
+static void test_chatworld_dataset_files_load(void) {
+    ChatWorldDataset train;
+    ChatWorldDataset frozen;
+    expect_true(chatworld_load_dataset("worlds/chatworld/datasets/train.tsv", &train) == 0,
+                "chatworld train dataset loads");
+    expect_true(chatworld_load_dataset("worlds/chatworld/datasets/frozen.tsv", &frozen) == 0,
+                "chatworld frozen dataset loads");
+    expect_true(train.count >= 8u, "chatworld train dataset has turns");
+    expect_true(frozen.count >= 6u, "chatworld frozen dataset has turns");
+    expect_true(strcmp(train.turns[0].utterance, "hello") == 0, "train utterance parsed");
+    expect_true(frozen.turns[0].learn == false, "frozen first turn is eval-only");
+}
+
 static void test_chatworld_zero_score_eval_has_no_fallback(void) {
     NervaEngine e;
     ChatWorldNerva cw;
     ChatWorld w;
-    ChatWorldTurn turn = {"what is my favorite food", CHAT_EXPECT_UNKNOWN, NULL, NULL, false};
+    ChatWorldTurn turn;
+    memset(&turn, 0, sizeof(turn));
+    strcpy(turn.utterance, "what is my favorite food");
+    turn.expected = CHAT_EXPECT_UNKNOWN;
     chatworld_reset(&w);
     expect_true(nerva_engine_init(&e, nerva_config_test()) == 0, "chatworld zero init");
     expect_true(chatworld_nerva_init(&e, &cw) == 0, "chatworld zero nerva init");
@@ -86,6 +102,54 @@ static void test_chatworld_lite_learns_policy_and_memory(void) {
     nerva_engine_free(&e);
 }
 
+static void test_chatworld_trace_artifact_records_decisions(void) {
+    NervaEngine e;
+    ChatWorldConfig cfg;
+    ChatWorldResult result;
+    const char *trace_path = "build/chatworld_trace_test.log";
+    chatworld_config_defaults(&cfg);
+    cfg.train_epochs = 4u;
+    cfg.trace_path = trace_path;
+    expect_true(nerva_engine_init(&e, nerva_config_test()) == 0, "chatworld trace init");
+    expect_true(chatworld_run(&e, &cfg, &result) == 0, "chatworld trace run");
+    expect_true(result.metrics.decision_trace_count > 0u, "chatworld decision trace count");
+    nerva_engine_free(&e);
+
+    FILE *f = fopen(trace_path, "r");
+    expect_true(f != NULL, "chatworld trace artifact opens");
+    if (f) {
+        char line[512];
+        int saw_header = 0;
+        int saw_train = 0;
+        int saw_frozen = 0;
+        int saw_action = 0;
+        int saw_mutation = 0;
+        while (fgets(line, sizeof(line), f)) {
+            if (strstr(line, "chatworld_trace_v1=1")) {
+                saw_header = 1;
+            }
+            if (strstr(line, "phase=train")) {
+                saw_train = 1;
+            }
+            if (strstr(line, "phase=frozen")) {
+                saw_frozen = 1;
+            }
+            if (strstr(line, "selected_action=")) {
+                saw_action = 1;
+            }
+            if (strstr(line, "mutation_delta=")) {
+                saw_mutation = 1;
+            }
+        }
+        fclose(f);
+        expect_true(saw_header, "trace has header");
+        expect_true(saw_train, "trace has train decisions");
+        expect_true(saw_frozen, "trace has frozen decisions");
+        expect_true(saw_action, "trace has selected action");
+        expect_true(saw_mutation, "trace has mutation delta");
+    }
+}
+
 static void test_chatworld_ablation_drops_eval(void) {
     NervaEngine full_e;
     NervaEngine ablate_e;
@@ -112,8 +176,10 @@ static void test_chatworld_ablation_drops_eval(void) {
 int test_chatworld_run(void) {
     g_failures = 0;
     test_chatworld_surface_adapter_no_oracle_labels();
+    test_chatworld_dataset_files_load();
     test_chatworld_zero_score_eval_has_no_fallback();
     test_chatworld_lite_learns_policy_and_memory();
+    test_chatworld_trace_artifact_records_decisions();
     test_chatworld_ablation_drops_eval();
     return g_failures;
 }

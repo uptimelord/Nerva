@@ -1,0 +1,6 @@
+# utterance	expected	key	value	learn
+hello friend	GREET			0
+thanks friend	ACK			0
+what is my favorite drink	UNKNOWN			0
+my name is Noa	ACK	name	noa	1
+what is my name	MEMORY_VALUE	name	noa	0

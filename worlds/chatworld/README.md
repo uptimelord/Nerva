@@ -14,5 +14,6 @@ The first implementation is ChatWorld-lite:
 - zero-weight policy edges at start
 - no fallback responder
 - no runtime LLM/API teacher
+- train/dev/frozen TSV datasets under `datasets/`
 
 Benchmark gates live in `benchmarks/chatworld_lite/`.

@@ -11,4 +11,10 @@ Initial target:
 .\build\nerva_chatworld.exe --train --eval --seed 1
 ```
 
+Trace-backed run:
+
+```powershell
+.\build\nerva_chatworld.exe --train --eval --seed 1 --trace runs/chatworld_lite/trace.log
+```
+
 Stable gate: `benchmarks/chatworld_lite/gate.md`.

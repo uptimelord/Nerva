@@ -13,3 +13,4 @@ Required reporting fields:
 - `memory_write_count`
 - `memory_read_count`
 - `trace_count`
+- `decision_trace_count`

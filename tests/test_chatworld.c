@@ -444,6 +444,131 @@ static void test_chatworld_stage3_unknown_requires_learned_support(void) {
     nerva_engine_free(&e);
 }
 
+static void test_chatworld_stage4_correction_overrides_prior_value(void) {
+    const char *train_path = "build/chatworld_stage4_train.tsv";
+    const char *frozen_path = "build/chatworld_stage4_frozen.tsv";
+    const char *trace_path = "build/chatworld_stage4_trace.log";
+    FILE *f = fopen(train_path, "w");
+    expect_true(f != NULL, "chatworld stage4 train file opens");
+    if (f) {
+        fputs("# utterance\texpected\tkey\tvalue\tlearn\n", f);
+        fputs("my name is Ada\tACK\tname\tada\t1\n", f);
+        fputs("what is my name\tMEMORY_VALUE\tname\tada\t1\n", f);
+        fputs("no my name is Grace\tACK\tname\tgrace\t1\n", f);
+        fclose(f);
+    }
+    f = fopen(frozen_path, "w");
+    expect_true(f != NULL, "chatworld stage4 frozen file opens");
+    if (f) {
+        fputs("# utterance\texpected\tkey\tvalue\tlearn\n", f);
+        fputs("what is my name\tMEMORY_VALUE\tname\tgrace\t0\n", f);
+        fclose(f);
+    }
+
+    NervaEngine e;
+    ChatWorldNerva preload_cw;
+    ChatWorldDataset train_ds;
+    ChatWorldDataset frozen_ds;
+    ChatWorldConfig cfg;
+    ChatWorldResult result;
+    chatworld_config_defaults(&cfg);
+    cfg.train_path = train_path;
+    cfg.frozen_path = frozen_path;
+    cfg.trace_path = trace_path;
+    cfg.train_epochs = 40u;
+    expect_true(nerva_engine_init(&e, nerva_config_test()) == 0, "chatworld stage4 init");
+    expect_true(chatworld_nerva_init(&e, &preload_cw) == 0, "chatworld stage4 preload cw init");
+    expect_true(chatworld_load_dataset(train_path, &train_ds) == 0,
+                "chatworld stage4 preload train load");
+    expect_true(chatworld_load_dataset(frozen_path, &frozen_ds) == 0,
+                "chatworld stage4 preload frozen load");
+    expect_true(chatworld_preload_dataset(&e, &preload_cw, &train_ds) == 0,
+                "chatworld stage4 preload train vocabulary");
+    expect_true(chatworld_preload_dataset(&e, &preload_cw, &frozen_ds) == 0,
+                "chatworld stage4 preload frozen vocabulary");
+
+    uint32_t node_count = e.node_count;
+    uint32_t edge_count = e.edge_count;
+    uint32_t name_count = e.name_count;
+
+    expect_true(chatworld_run(&e, &cfg, &result) == 0, "chatworld stage4 run");
+    expect_true(result.metrics.train_total == 120u, "chatworld stage4 training ran");
+    expect_true(result.metrics.eval_total == 1u, "chatworld stage4 eval ran");
+    expect_true(result.metrics.eval_correct == 1u, "chatworld stage4 correction wins");
+    expect_true(result.metrics.eval_mutations == 0u, "chatworld stage4 frozen has zero mutations");
+    expect_true(result.metrics.fallback_count == 0u, "chatworld stage4 has no ambiguity");
+    expect_true(result.metrics.no_supported_response_count == 0u,
+                "chatworld stage4 has no unsupported response");
+    expect_true(e.node_count == node_count, "chatworld stage4 train/eval does not add nodes");
+    expect_true(e.edge_count == edge_count, "chatworld stage4 train/eval does not add edges");
+    expect_true(e.name_count == name_count, "chatworld stage4 train/eval does not add names");
+    nerva_engine_free(&e);
+
+    NervaEngine ablate_e;
+    ChatWorldConfig ablate_cfg = cfg;
+    ChatWorldResult ablated;
+    ablate_cfg.trace_path = NULL;
+    ablate_cfg.ablate_response_edges = true;
+    expect_true(nerva_engine_init(&ablate_e, nerva_config_test()) == 0,
+                "chatworld stage4 ablate init");
+    expect_true(chatworld_run(&ablate_e, &ablate_cfg, &ablated) == 0,
+                "chatworld stage4 ablate run");
+    expect_true(ablated.metrics.eval_total == 1u, "chatworld stage4 ablate eval ran");
+    expect_true(ablated.metrics.eval_correct == 0u,
+                "chatworld stage4 learned-edge ablation collapses correction read");
+    expect_true(ablated.metrics.no_supported_response_count == 1u,
+                "chatworld stage4 ablation produces no-supported correction read");
+    nerva_engine_free(&ablate_e);
+
+    f = fopen(trace_path, "r");
+    expect_true(f != NULL, "chatworld stage4 trace opens");
+    if (f) {
+        char line[768];
+        int saw_ada_write = 0;
+        int saw_ada_read = 0;
+        int saw_grace_write = 0;
+        int saw_grace_read = 0;
+        int saw_stale_frozen_value = 0;
+        while (fgets(line, sizeof(line), f)) {
+            if (strstr(line, "phase=train utterance=\"my name is Ada\"") &&
+                strstr(line, "fired_action=ACTION:MEM_WRITE") &&
+                strstr(line, "key=\"name\"") && strstr(line, "value=\"ada\"") &&
+                trace_line_has_edges(line)) {
+                saw_ada_write = 1;
+            }
+            if (strstr(line, "phase=train utterance=\"what is my name\"") &&
+                strstr(line, "fired_action=ACTION:MEM_READ") &&
+                strstr(line, "rendered=\"ada\"") && trace_line_has_edges(line)) {
+                saw_ada_read = 1;
+            }
+            if (strstr(line, "phase=train utterance=\"no my name is Grace\"") &&
+                strstr(line, "fired_action=ACTION:MEM_WRITE") &&
+                strstr(line, "key=\"name\"") && strstr(line, "value=\"grace\"") &&
+                trace_line_has_edges(line)) {
+                saw_grace_write = 1;
+            }
+            if (strstr(line, "phase=frozen utterance=\"what is my name\"")) {
+                if (strstr(line, "fired_action=ACTION:MEM_READ") &&
+                    strstr(line, "frame=ANSWER_MEMORY") &&
+                    strstr(line, "rendered=\"grace\"") && strstr(line, "value=\"grace\"") &&
+                    strstr(line, "mutation_delta=0") && strstr(line, "fired_outputs=1") &&
+                    strstr(line, "mem_read=1") && trace_line_has_edges(line)) {
+                    saw_grace_read = 1;
+                }
+                if (strstr(line, "rendered=\"ada\"") || strstr(line, "value=\"ada\"")) {
+                    saw_stale_frozen_value = 1;
+                }
+            }
+        }
+        fclose(f);
+        expect_true(saw_ada_write, "chatworld stage4 trace shows initial Ada MEM_WRITE");
+        expect_true(saw_ada_read, "chatworld stage4 trace shows Ada was readable before correction");
+        expect_true(saw_grace_write, "chatworld stage4 trace shows Grace correction MEM_WRITE");
+        expect_true(saw_grace_read, "chatworld stage4 trace shows corrected Grace MEM_READ");
+        expect_true(!saw_stale_frozen_value, "chatworld stage4 frozen read does not leak Ada");
+    }
+}
+
 static void test_chatworld_v14_learns_policy_and_memory(void) {
     NervaEngine e;
     ChatWorldConfig cfg;
@@ -672,6 +797,7 @@ int test_chatworld_run(void) {
     test_chatworld_stage2_held_out_same_template_entities();
     test_chatworld_stage3_response_behaviors_are_learned_paths();
     test_chatworld_stage3_unknown_requires_learned_support();
+    test_chatworld_stage4_correction_overrides_prior_value();
     test_chatworld_v14_learns_policy_and_memory();
     test_chatworld_unknown_query_does_not_read_arbitrary_memory();
     test_chatworld_frozen_eval_does_not_grow_graph();

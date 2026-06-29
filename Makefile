@@ -1,5 +1,5 @@
 CC ?= gcc
-CFLAGS ?= -std=c11 -Wall -Wextra -Wpedantic -Iinclude -Itests -Itools -Iworlds/tagworld
+CFLAGS ?= -std=c11 -Wall -Wextra -Wpedantic -Iinclude -Itests -Itools -Iworlds/tagworld -Iworlds/chatworld
 LDFLAGS ?=
 
 # Prefer repo-local toolchain on Windows (after scripts/bootstrap-toolchain.ps1)
@@ -18,6 +18,7 @@ SRC_DIR = src
 TEST_DIR = tests
 TOOLS_DIR = tools
 WORLD_TAGWORLD_DIR = worlds/tagworld
+WORLD_CHATWORLD_DIR = worlds/chatworld
 
 LIB_SRCS = \
 	$(SRC_DIR)/nerva_graph.c \
@@ -52,6 +53,7 @@ TEST_SRCS = \
 	$(TEST_DIR)/test_persist.c \
 	$(TEST_DIR)/test_bench.c \
 	$(TEST_DIR)/test_tagworld.c \
+	$(TEST_DIR)/test_chatworld.c \
 	$(TEST_DIR)/nerva_test_fixtures.c
 TEST_OBJS = $(patsubst $(TEST_DIR)/%.c,$(BUILD_DIR)/%.o,$(TEST_SRCS))
 
@@ -60,16 +62,18 @@ TEST_BIN = $(BUILD_DIR)/test_runner.exe
 CLI_BIN = $(BUILD_DIR)/nerva_cli.exe
 BENCH_BIN = $(BUILD_DIR)/nerva_bench.exe
 TAGWORLD_BIN = $(BUILD_DIR)/nerva_tagworld.exe
+CHATWORLD_BIN = $(BUILD_DIR)/nerva_chatworld.exe
 else
 TEST_BIN = $(BUILD_DIR)/test_runner
 CLI_BIN = $(BUILD_DIR)/nerva_cli
 BENCH_BIN = $(BUILD_DIR)/nerva_bench
 TAGWORLD_BIN = $(BUILD_DIR)/nerva_tagworld
+CHATWORLD_BIN = $(BUILD_DIR)/nerva_chatworld
 endif
 
-.PHONY: all test cli bench tagworld clean bootstrap-toolchain
+.PHONY: all test cli bench tagworld chatworld clean bootstrap-toolchain
 
-all: test cli bench tagworld
+all: test cli bench tagworld chatworld
 
 bootstrap-toolchain:
 	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/bootstrap-toolchain.ps1
@@ -82,6 +86,8 @@ cli: $(CLI_BIN)
 bench: $(BENCH_BIN)
 
 tagworld: $(TAGWORLD_BIN)
+
+chatworld: $(CHATWORLD_BIN)
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
@@ -98,10 +104,18 @@ $(BUILD_DIR)/tagworld.o: $(WORLD_TAGWORLD_DIR)/tagworld.c | $(BUILD_DIR)
 $(BUILD_DIR)/tagworld_viz.o: $(WORLD_TAGWORLD_DIR)/tagworld_viz.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-TAGWORLD_OBJS = $(BUILD_DIR)/tagworld.o $(BUILD_DIR)/tagworld_viz.o
+$(BUILD_DIR)/tagworld_maps.o: $(WORLD_TAGWORLD_DIR)/maps/tagworld_maps.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
 
-$(TEST_BIN): $(LIB_OBJS) $(TEST_OBJS) $(TAGWORLD_OBJS)
-	$(CC) $(CFLAGS) $(LIB_OBJS) $(TEST_OBJS) $(TAGWORLD_OBJS) -o $@ $(LDFLAGS)
+TAGWORLD_OBJS = $(BUILD_DIR)/tagworld.o $(BUILD_DIR)/tagworld_viz.o $(BUILD_DIR)/tagworld_maps.o
+
+$(BUILD_DIR)/chatworld.o: $(WORLD_CHATWORLD_DIR)/chatworld.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+CHATWORLD_OBJS = $(BUILD_DIR)/chatworld.o
+
+$(TEST_BIN): $(LIB_OBJS) $(TEST_OBJS) $(TAGWORLD_OBJS) $(CHATWORLD_OBJS)
+	$(CC) $(CFLAGS) $(LIB_OBJS) $(TEST_OBJS) $(TAGWORLD_OBJS) $(CHATWORLD_OBJS) -o $@ $(LDFLAGS)
 
 $(CLI_BIN): $(LIB_OBJS) $(TOOLS_DIR)/nerva_cli.c
 	$(CC) $(CFLAGS) $(TOOLS_DIR)/nerva_cli.c $(LIB_OBJS) -o $@ $(LDFLAGS)
@@ -111,6 +125,9 @@ $(BENCH_BIN): $(LIB_OBJS) $(TOOLS_DIR)/nerva_bench.c
 
 $(TAGWORLD_BIN): $(LIB_OBJS) $(TAGWORLD_OBJS) $(TOOLS_DIR)/tagworld_cli.c
 	$(CC) $(CFLAGS) $(TOOLS_DIR)/tagworld_cli.c $(LIB_OBJS) $(TAGWORLD_OBJS) -o $@ $(LDFLAGS)
+
+$(CHATWORLD_BIN): $(LIB_OBJS) $(CHATWORLD_OBJS) $(TOOLS_DIR)/chatworld_cli.c
+	$(CC) $(CFLAGS) $(TOOLS_DIR)/chatworld_cli.c $(LIB_OBJS) $(CHATWORLD_OBJS) -o $@ $(LDFLAGS)
 
 clean:
 	rm -rf $(BUILD_DIR)

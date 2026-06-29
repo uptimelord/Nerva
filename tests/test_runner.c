@@ -16,6 +16,7 @@ int test_parse_run(void);
 int test_persist_run(void);
 int test_bench_run(void);
 int test_tagworld_run(void);
+int test_chatworld_run(void);
 
 int main(void) {
     int failures = 0;
@@ -32,6 +33,7 @@ int main(void) {
     failures += test_persist_run();
     failures += test_bench_run();
     failures += test_tagworld_run();
+    failures += test_chatworld_run();
 
     if (failures == 0) {
         printf("All tests passed.\n");

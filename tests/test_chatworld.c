@@ -22,6 +22,15 @@ static int node_exists(const NervaEngine *e, const char *name) {
     return nerva_find_node_by_name(e, name) != UINT32_MAX;
 }
 
+static int trace_line_has_edges(const char *line) {
+    const char *edges = strstr(line, "trace_edges=");
+    if (!edges) {
+        return 0;
+    }
+    edges += strlen("trace_edges=");
+    return edges[0] != '\0' && edges[0] != '\r' && edges[0] != '\n';
+}
+
 static void test_chatworld_surface_adapter_purist_nodes(void) {
     NervaEngine e;
     ChatWorldNerva cw;
@@ -274,6 +283,167 @@ static void test_chatworld_stage2_held_out_same_template_entities(void) {
     }
 }
 
+static void test_chatworld_stage3_response_behaviors_are_learned_paths(void) {
+    const char *train_path = "build/chatworld_stage3_train.tsv";
+    const char *frozen_path = "build/chatworld_stage3_frozen.tsv";
+    const char *trace_path = "build/chatworld_stage3_trace.log";
+    FILE *f = fopen(train_path, "w");
+    expect_true(f != NULL, "chatworld stage3 train file opens");
+    if (f) {
+        fputs("# utterance\texpected\tkey\tvalue\tlearn\n", f);
+        fputs("hello\tGREET\t\t\t1\n", f);
+        fputs("thanks\tACK\t\t\t1\n", f);
+        fputs("what is my favorite food\tUNKNOWN\t\t\t1\n", f);
+        fclose(f);
+    }
+    f = fopen(frozen_path, "w");
+    expect_true(f != NULL, "chatworld stage3 frozen file opens");
+    if (f) {
+        fputs("# utterance\texpected\tkey\tvalue\tlearn\n", f);
+        fputs("hello\tGREET\t\t\t0\n", f);
+        fputs("thanks\tACK\t\t\t0\n", f);
+        fputs("what is my favorite color\tUNKNOWN\t\t\t0\n", f);
+        fclose(f);
+    }
+
+    NervaEngine e;
+    ChatWorldNerva preload_cw;
+    ChatWorldDataset train_ds;
+    ChatWorldDataset frozen_ds;
+    ChatWorldConfig cfg;
+    ChatWorldResult result;
+    chatworld_config_defaults(&cfg);
+    cfg.train_path = train_path;
+    cfg.frozen_path = frozen_path;
+    cfg.trace_path = trace_path;
+    cfg.train_epochs = 40u;
+    expect_true(nerva_engine_init(&e, nerva_config_test()) == 0, "chatworld stage3 init");
+    expect_true(chatworld_nerva_init(&e, &preload_cw) == 0, "chatworld stage3 preload cw init");
+    expect_true(chatworld_load_dataset(train_path, &train_ds) == 0,
+                "chatworld stage3 preload train load");
+    expect_true(chatworld_load_dataset(frozen_path, &frozen_ds) == 0,
+                "chatworld stage3 preload frozen load");
+    expect_true(chatworld_preload_dataset(&e, &preload_cw, &train_ds) == 0,
+                "chatworld stage3 preload train vocabulary");
+    expect_true(chatworld_preload_dataset(&e, &preload_cw, &frozen_ds) == 0,
+                "chatworld stage3 preload frozen vocabulary");
+
+    uint32_t node_count = e.node_count;
+    uint32_t edge_count = e.edge_count;
+    uint32_t name_count = e.name_count;
+
+    expect_true(chatworld_run(&e, &cfg, &result) == 0, "chatworld stage3 run");
+    expect_true(result.metrics.train_total == 120u, "chatworld stage3 training ran");
+    expect_true(result.metrics.eval_total == 3u, "chatworld stage3 eval ran");
+    expect_true(result.metrics.eval_correct == 3u, "chatworld stage3 response eval passes");
+    expect_true(result.metrics.eval_mutations == 0u, "chatworld stage3 frozen has zero mutations");
+    expect_true(result.metrics.fallback_count == 0u, "chatworld stage3 has no ambiguity");
+    expect_true(result.metrics.no_supported_response_count == 0u,
+                "chatworld stage3 has no unsupported response");
+    expect_true(result.metrics.memory_write_count == 0u, "chatworld stage3 does not write memory");
+    expect_true(result.metrics.memory_read_count == 0u, "chatworld stage3 does not read memory");
+    expect_true(e.node_count == node_count, "chatworld stage3 train/eval does not add nodes");
+    expect_true(e.edge_count == edge_count, "chatworld stage3 train/eval does not add edges");
+    expect_true(e.name_count == name_count, "chatworld stage3 train/eval does not add names");
+    nerva_engine_free(&e);
+
+    NervaEngine ablate_e;
+    ChatWorldConfig ablate_cfg = cfg;
+    ChatWorldResult ablated;
+    ablate_cfg.trace_path = NULL;
+    ablate_cfg.ablate_response_edges = true;
+    expect_true(nerva_engine_init(&ablate_e, nerva_config_test()) == 0,
+                "chatworld stage3 ablate init");
+    expect_true(chatworld_run(&ablate_e, &ablate_cfg, &ablated) == 0,
+                "chatworld stage3 ablate run");
+    expect_true(ablated.metrics.eval_total == 3u, "chatworld stage3 ablate eval ran");
+    expect_true(ablated.metrics.eval_correct == 0u,
+                "chatworld stage3 response-edge ablation collapses eval");
+    expect_true(ablated.metrics.no_supported_response_count == ablated.metrics.eval_total,
+                "chatworld stage3 ablation produces only no-supported responses");
+    nerva_engine_free(&ablate_e);
+
+    f = fopen(trace_path, "r");
+    expect_true(f != NULL, "chatworld stage3 trace opens");
+    if (f) {
+        char line[768];
+        int saw_hello = 0;
+        int saw_ack = 0;
+        int saw_unknown = 0;
+        int saw_bad_response = 0;
+        while (fgets(line, sizeof(line), f)) {
+            if (strstr(line, "phase=frozen utterance=\"hello\"")) {
+                if (strstr(line, "fired_action=NO_ACTION") &&
+                    strstr(line, "frame=OUTPUT") && strstr(line, "rendered=\"hello\"") &&
+                    strstr(line, "fired_outputs=1") && strstr(line, "mutation_delta=0") &&
+                    trace_line_has_edges(line)) {
+                    saw_hello = 1;
+                } else {
+                    saw_bad_response = 1;
+                }
+            }
+            if (strstr(line, "phase=frozen utterance=\"thanks\"")) {
+                if (strstr(line, "fired_action=NO_ACTION") &&
+                    strstr(line, "frame=OUTPUT") && strstr(line, "rendered=\"ok\"") &&
+                    strstr(line, "fired_outputs=1") && strstr(line, "mutation_delta=0") &&
+                    trace_line_has_edges(line)) {
+                    saw_ack = 1;
+                } else {
+                    saw_bad_response = 1;
+                }
+            }
+            if (strstr(line, "phase=frozen utterance=\"what is my favorite color\"")) {
+                if (strstr(line, "fired_action=ACTION:RESP_UNKNOWN") &&
+                    strstr(line, "frame=RESP_UNKNOWN") &&
+                    strstr(line, "rendered=\"unknown\"") && strstr(line, "fired_actions=1") &&
+                    strstr(line, "fired_outputs=1") && strstr(line, "resp_unknown=1") &&
+                    strstr(line, "mem_write=0") && strstr(line, "mem_read=0") &&
+                    strstr(line, "mutation_delta=0") && trace_line_has_edges(line)) {
+                    saw_unknown = 1;
+                } else {
+                    saw_bad_response = 1;
+                }
+            }
+        }
+        fclose(f);
+        expect_true(saw_hello, "chatworld stage3 trace shows learned greeting output");
+        expect_true(saw_ack, "chatworld stage3 trace shows learned acknowledgement output");
+        expect_true(saw_unknown, "chatworld stage3 trace shows learned RESP_UNKNOWN output");
+        expect_true(!saw_bad_response, "chatworld stage3 trace has no response handholding leak");
+    }
+}
+
+static void test_chatworld_stage3_unknown_requires_learned_support(void) {
+    NervaEngine e;
+    ChatWorldNerva cw;
+    ChatWorld w;
+    ChatWorldDataset ds;
+    ChatWorldTurn turn;
+    memset(&ds, 0, sizeof(ds));
+    memset(&turn, 0, sizeof(turn));
+    strcpy(ds.turns[0].utterance, "what is my favorite color");
+    ds.turns[0].expected = CHAT_EXPECT_UNKNOWN;
+    ds.turns[0].learn = false;
+    ds.count = 1u;
+    strcpy(turn.utterance, "what is my favorite color");
+    turn.expected = CHAT_EXPECT_UNKNOWN;
+
+    chatworld_reset(&w);
+    expect_true(nerva_engine_init(&e, nerva_config_test()) == 0,
+                "chatworld stage3 unsupported init");
+    expect_true(chatworld_nerva_init(&e, &cw) == 0,
+                "chatworld stage3 unsupported cw init");
+    expect_true(chatworld_preload_dataset(&e, &cw, &ds) == 0,
+                "chatworld stage3 unsupported preload");
+    ChatWorldDecision d = chatworld_step(&e, &cw, &w, &turn);
+    expect_true(d.no_supported_response,
+                "chatworld stage3 unsupported unknown has no learned support");
+    expect_true(!d.resp_unknown_fired, "chatworld stage3 unsupported does not fire RESP_UNKNOWN");
+    expect_true(!d.output_fired, "chatworld stage3 unsupported renders no output token");
+    expect_true(strcmp(d.rendered, "") == 0, "chatworld stage3 unsupported renders empty");
+    nerva_engine_free(&e);
+}
+
 static void test_chatworld_v14_learns_policy_and_memory(void) {
     NervaEngine e;
     ChatWorldConfig cfg;
@@ -500,6 +670,8 @@ int test_chatworld_run(void) {
     test_chatworld_zero_score_eval_has_no_fallback();
     test_chatworld_stage1_memory_heartbeat();
     test_chatworld_stage2_held_out_same_template_entities();
+    test_chatworld_stage3_response_behaviors_are_learned_paths();
+    test_chatworld_stage3_unknown_requires_learned_support();
     test_chatworld_v14_learns_policy_and_memory();
     test_chatworld_unknown_query_does_not_read_arbitrary_memory();
     test_chatworld_frozen_eval_does_not_grow_graph();

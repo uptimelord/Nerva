@@ -6,16 +6,5 @@ DISCIPLINE.md
 /build/
 /build-sanitize/
 /runs/
-/experiments/**/trace.log
-/experiments/**/mutation.log
-/experiments/**/prediction.log
-/experiments/**/memory.log
-/experiments/**/routing.log
-/experiments/**/script.log
-/experiments/**/persist.log
-/experiments/**/bench.log
-/experiments/**/run_*.log
-/experiments/**/prediction_trace.log
-/experiments/**/full_trace.log
-/experiments/**/*.nerva
+/experiments/
 /worlds/tagworld/viewer/demo.jsonl

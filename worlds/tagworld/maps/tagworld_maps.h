@@ -9,8 +9,11 @@
 int tagworld_map_is_tool(TagWorldMapId map_id);
 int tagworld_map_is_train_tool(TagWorldMapId map_id);
 int tagworld_map_is_held_out_tool(TagWorldMapId map_id);
+int tagworld_map_is_honest_train_tool(TagWorldMapId map_id);
+int tagworld_map_is_honest_held_out_tool(TagWorldMapId map_id);
 int tagworld_map_is_d_geometry_alias(TagWorldMapId map_id);
 TagWorldMapId tagworld_generalization_train_map(uint32_t episode);
+TagWorldMapId tagworld_honest_generalization_train_map(uint32_t episode);
 const char *tagworld_generalization_map_letter(TagWorldMapId map_id);
 
 void tagworld_init_map_for_id(TagWorld *w, TagWorldMapId map_id, int grid);

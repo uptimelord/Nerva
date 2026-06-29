@@ -741,24 +741,33 @@ static void test_tagworld_pure_feedback_no_dynamics_pretrain(void) {
     nerva_engine_free(&e);
 }
 
-static void test_tagworld_pure_feedback_g_all_gate_seeds(void) {
-    static const uint32_t seeds[] = {1u, 2u, 3u, 5u, 7u, 11u};
+static void test_tagworld_legacy_pure_feedback_g_records_fallback_contamination(void) {
+    static const uint32_t seeds[] = {1u, 5u, 11u};
     TagWorldConfig cfg = tagworld_pure_feedback_g_config();
+    uint32_t fallback_seeds = 0u;
+    uint32_t failed_seeds = 0u;
 
     for (size_t i = 0; i < sizeof(seeds) / sizeof(seeds[0]); ++i) {
         cfg.seed = seeds[i];
         NervaEngine e;
-        expect_true(nerva_engine_init(&e, nerva_config_test()) == 0, "pf G gate seed init");
+        expect_true(nerva_engine_init(&e, nerva_config_test()) == 0, "legacy pf G seed init");
         TagWorldGeneralizationResult result;
-        expect_true(tagworld_run_generalization_result(&e, &cfg, &result) == 0, "pf G gate seed run");
-        expect_true(result.eval_map == TAGWORLD_MAP_TOOL_G, "pf G gate eval map is G");
-        expect_true(result.train.push_block_observations > 0u,
-                    "pf G gate seed observes push block during learn");
-        expect_true(result.eval.escape_rate >= result.eval.baseline_escape_rate + 0.2,
-                    "pf G gate seed beats random by 20pp");
-        expect_true(result.eval.action_push_doorway_count > 0u, "pf G gate seed eval pushes");
+        expect_true(tagworld_run_generalization_result(&e, &cfg, &result) == 0,
+                    "legacy pf G seed run");
+        expect_true(result.eval_map == TAGWORLD_MAP_TOOL_G, "legacy pf G eval map is G");
+        if (result.eval.action_score_fallback_count > 0u) {
+            fallback_seeds++;
+        }
+        if (result.eval.escape_rate + 1e-9 < result.eval.baseline_escape_rate + 0.2) {
+            failed_seeds++;
+        }
         nerva_engine_free(&e);
     }
+
+    expect_true(fallback_seeds > 0u,
+                "legacy pure-feedback G exposes nonzero eval fallback contamination");
+    expect_true(failed_seeds > 0u,
+                "legacy pure-feedback G is not retained as a promoted all-seed gate");
 }
 
 static void test_tagworld_generalization_train_push_increases(void) {
@@ -866,60 +875,69 @@ static void test_tagworld_map_g_headroom(void) {
 }
 
 static void test_tagworld_map_h_honest_stage1_gate(void) {
-    TagWorldConfig cfg = tagworld_tool_test_config();
-    cfg.map_id = TAGWORLD_MAP_TOOL_H;
-    cfg.honest = true;
+    static const TagWorldMapId maps[] = {
+        TAGWORLD_MAP_TOOL_H,
+        TAGWORLD_MAP_TOOL_H2,
+        TAGWORLD_MAP_TOOL_H3,
+    };
 
-    uint32_t oracle_escaped = 0u;
-    for (uint32_t ep = 0u; ep < 200u; ++ep) {
-        TagWorld w;
-        tagworld_reset_for_config(&w, &cfg, ep);
-        int outcome =
-            tagworld_simulate_with_policy(&w, tagworld_push_then_run_policy, NULL, cfg.max_ticks);
-        if (outcome == TAGWORLD_OUTCOME_ESCAPED) {
-            oracle_escaped++;
+    for (size_t mi = 0; mi < sizeof(maps) / sizeof(maps[0]); ++mi) {
+        TagWorldConfig cfg = tagworld_tool_test_config();
+        cfg.map_id = maps[mi];
+        cfg.honest = true;
+
+        uint32_t oracle_escaped = 0u;
+        for (uint32_t ep = 0u; ep < 200u; ++ep) {
+            TagWorld w;
+            tagworld_reset_for_config(&w, &cfg, ep);
+            int outcome =
+                tagworld_simulate_with_policy(&w, tagworld_push_then_run_policy, NULL, cfg.max_ticks);
+            if (outcome == TAGWORLD_OUTCOME_ESCAPED) {
+                oracle_escaped++;
+            }
         }
+
+        uint32_t rand_escaped = 0u;
+        uint32_t rand_caught = 0u;
+        uint32_t rand_timeout = 0u;
+        for (uint32_t ep = 0u; ep < 300u; ++ep) {
+            TagWorld w;
+            tagworld_reset_for_config(&w, &cfg, ep);
+            uint32_t rng = cfg.seed ^ (ep * 2654435761u);
+            for (uint32_t t = 0u; t < cfg.max_ticks && !w.done; ++t) {
+                TagWorldAction action = tagworld_random_action(&w, &rng);
+                tagworld_apply_action(&w, action);
+                tagworld_step_seeker(&w);
+                tagworld_check_outcome(&w);
+            }
+            if (!w.done) {
+                w.outcome = TAGWORLD_OUTCOME_TIMEOUT;
+            }
+            if (w.outcome == TAGWORLD_OUTCOME_ESCAPED) {
+                rand_escaped++;
+            } else if (w.outcome == TAGWORLD_OUTCOME_CAUGHT) {
+                rand_caught++;
+            } else {
+                rand_timeout++;
+            }
+        }
+
+        double oracle_rate = (double)oracle_escaped / 200.0;
+        double random_rate = (double)rand_escaped / 300.0;
+        double run_only_rate = tagworld_baseline_always_run_escape_rate(&cfg, 300u);
+
+        fprintf(stderr,
+                "MAP_%s honest stage1: oracle=%.3f run_only=%.3f random=%.3f caught=%u timeout=%u\n",
+                tagworld_generalization_map_letter(maps[mi]), oracle_rate, run_only_rate,
+                random_rate, rand_caught, rand_timeout);
+
+        expect_true(oracle_rate >= 0.95, "honest map oracle push->run escapes >=95%");
+        expect_true(random_rate >= 0.20 && random_rate <= 0.80,
+                    "honest map random escape in 20-80% band");
+        expect_true(rand_caught > 0u, "honest map random play produces CAUGHT");
+        expect_true(run_only_rate < oracle_rate - 0.10,
+                    "honest map seal-then-run beats run-only (tool use necessary)");
     }
-
-    uint32_t rand_escaped = 0u;
-    uint32_t rand_caught = 0u;
-    uint32_t rand_timeout = 0u;
-    for (uint32_t ep = 0u; ep < 300u; ++ep) {
-        TagWorld w;
-        tagworld_reset_for_config(&w, &cfg, ep);
-        uint32_t rng = cfg.seed ^ (ep * 2654435761u);
-        for (uint32_t t = 0u; t < cfg.max_ticks && !w.done; ++t) {
-            TagWorldAction action = tagworld_random_action(&w, &rng);
-            tagworld_apply_action(&w, action);
-            tagworld_step_seeker(&w);
-            tagworld_check_outcome(&w);
-        }
-        if (!w.done) {
-            w.outcome = TAGWORLD_OUTCOME_TIMEOUT;
-        }
-        if (w.outcome == TAGWORLD_OUTCOME_ESCAPED) {
-            rand_escaped++;
-        } else if (w.outcome == TAGWORLD_OUTCOME_CAUGHT) {
-            rand_caught++;
-        } else {
-            rand_timeout++;
-        }
-    }
-
-    double oracle_rate = (double)oracle_escaped / 200.0;
-    double random_rate = (double)rand_escaped / 300.0;
-    double run_only_rate = tagworld_baseline_always_run_escape_rate(&cfg, 300u);
-
-    fprintf(stderr,
-            "MAP_H honest stage1: oracle=%.3f run_only=%.3f random=%.3f caught=%u timeout=%u\n",
-            oracle_rate, run_only_rate, random_rate, rand_caught, rand_timeout);
-
-    expect_true(oracle_rate >= 0.95, "map H honest oracle push->run escapes >=95%");
-    expect_true(random_rate >= 0.20 && random_rate <= 0.80,
-                "map H honest random escape in 20-80% band");
-    expect_true(rand_caught > 0u, "map H honest random play produces CAUGHT");
-    expect_true(run_only_rate < oracle_rate - 0.10,
-                "map H seal-then-run beats run-only (tool use necessary)");
 }
 
 static int tagworld_test_fire_log_contains(const NervaEngine *e, uint32_t node_id) {
@@ -1044,6 +1062,140 @@ static void test_tagworld_honest_pure_feedback_no_oracle(void) {
                 "honest pure feedback uses zero oracle train_pair rounds");
     expect_true(result.learn.pure_feedback_credit_mutations > 0u,
                 "honest pure feedback queues outcome credit mutations");
+    nerva_engine_free(&e);
+}
+
+static void test_tagworld_honest_eval_zero_scores_are_not_random_fallback(void) {
+    TagWorldConfig cfg = tagworld_honest_learn_test_config();
+    cfg.online_frozen_eval = false;
+    cfg.pure_feedback = false;
+    cfg.max_ticks = 0u;
+    cfg.seed = 1u;
+
+    NervaEngine e;
+    expect_true(nerva_engine_init(&e, nerva_config_test()) == 0, "honest eval tie init");
+    TagWorldNerva tn;
+    tagworld_nerva_init(&e, &tn);
+    tagworld_pretrain_for_config(&e, &tn, &cfg);
+
+    TagWorld w;
+    TagWorldMetrics setup_metrics;
+    memset(&setup_metrics, 0, sizeof(setup_metrics));
+    expect_true(tagworld_run_episode(&e, &tn, &w, &cfg, &setup_metrics, NULL) == 0,
+                "honest eval tie setup run");
+
+    cfg.max_ticks = 64u;
+    tagworld_reset_for_config(&w, &cfg, 0u);
+    TagWorldMetrics eval_metrics;
+    memset(&eval_metrics, 0, sizeof(eval_metrics));
+    tagworld_set_online_phase(TAGWORLD_ONLINE_EVAL);
+    tagworld_nerva_emit_state_events(&e, &tn, &w, &eval_metrics);
+
+    TagWorldActionScoreTrace trace;
+    memset(&trace, 0, sizeof(trace));
+    TagWorldAction selected = tagworld_nerva_select_action_scored(
+        &e, &tn, &w, tagworld_valid_action_mask(&w), &eval_metrics, &trace);
+    tagworld_set_online_phase(TAGWORLD_ONLINE_NONE);
+
+    expect_true(selected == TAG_ACTION_WAIT, "honest eval zero-score tie is deterministic");
+    expect_true(eval_metrics.action_tie_zero_score_count == 1u,
+                "honest eval records zero-score tie");
+    expect_true(eval_metrics.action_score_fallback_count == 0u,
+                "honest eval records no fallback for zero-score tie");
+    expect_true(!trace.fallback_used, "honest eval zero-score tie is not legacy fallback");
+    nerva_engine_free(&e);
+}
+
+static void test_tagworld_honest_quiesce_resets_refractory_activation_count(void) {
+    TagWorldConfig cfg = tagworld_honest_learn_test_config();
+    cfg.online_frozen_eval = false;
+    cfg.pure_feedback = false;
+    cfg.max_ticks = 1u;
+    cfg.seed = 1u;
+
+    NervaEngine e;
+    expect_true(nerva_engine_init(&e, nerva_config_test()) == 0, "honest refractory reset init");
+    TagWorldNerva tn;
+    tagworld_nerva_init(&e, &tn);
+    tagworld_pretrain_for_config(&e, &tn, &cfg);
+
+    TagWorld w;
+    TagWorldMetrics metrics;
+    memset(&metrics, 0, sizeof(metrics));
+    expect_true(tagworld_run_episode(&e, &tn, &w, &cfg, &metrics, NULL) == 0,
+                "honest refractory first episode");
+    expect_true(e.nodes[tn.honest.feature[3]].activation_count > 0u,
+                "honest first episode fires seeker-west feature");
+
+    expect_true(tagworld_run_episode(&e, &tn, &w, &cfg, &metrics, NULL) == 0,
+                "honest refractory second episode");
+    expect_true(tagworld_test_fire_log_contains(&e, tn.honest.feature[3]),
+                "honest second episode refires tick-zero feature after quiesce");
+    nerva_engine_free(&e);
+}
+
+static void test_tagworld_honest_generalization_runs_on_calibrated_maps(void) {
+    TagWorldConfig cfg = tagworld_honest_learn_test_config();
+    cfg.online_frozen_eval = false;
+    cfg.tool_generalization = true;
+    cfg.generalization_eval_map = TAGWORLD_MAP_TOOL_H3;
+    cfg.online_learn_episodes = 1000u;
+    cfg.online_eval_episodes = 100u;
+    cfg.seed = 1u;
+
+    tagworld_debug_reset_oracle_counters();
+    NervaEngine e;
+    expect_true(nerva_engine_init(&e, nerva_config_test()) == 0,
+                "honest generalization calibrated init");
+    TagWorldGeneralizationResult result;
+    expect_true(tagworld_run_generalization_result(&e, &cfg, &result) == 0,
+                "honest generalization calibrated run");
+    expect_true(result.eval_map == TAGWORLD_MAP_TOOL_H3,
+                "honest generalization eval map is held-out H3");
+    expect_true(result.coverage_episodes_resolved == 0u,
+                "honest generalization disables forced coverage");
+    expect_true(result.eval.escape_rate >= result.eval.baseline_escape_rate + 0.20,
+                "honest held-out eval beats random by 20pp");
+    expect_true(result.eval.avg_mutations_per_episode == 0.0,
+                "honest held-out eval applies zero mutations");
+    expect_true(result.eval.action_score_fallback_count == 0u,
+                "honest held-out eval has zero action-score fallbacks");
+    expect_true(tagworld_debug_oracle_online_train_pair_rounds() == 0u,
+                "honest generalization uses zero oracle train_pair rounds");
+    nerva_engine_free(&e);
+}
+
+static void test_tagworld_honest_generalization_ablation_drops_eval(void) {
+    TagWorldConfig cfg = tagworld_honest_learn_test_config();
+    cfg.online_frozen_eval = false;
+    cfg.tool_generalization = true;
+    cfg.generalization_eval_map = TAGWORLD_MAP_TOOL_H3;
+    cfg.online_learn_episodes = 1000u;
+    cfg.online_eval_episodes = 100u;
+    cfg.seed = 1u;
+
+    NervaEngine e;
+    expect_true(nerva_engine_init(&e, nerva_config_test()) == 0,
+                "honest ablation init");
+    TagWorldGeneralizationResult result;
+    expect_true(tagworld_run_generalization_result(&e, &cfg, &result) == 0,
+                "honest ablation full run");
+
+    TagWorldNerva tn;
+    tagworld_nerva_init(&e, &tn);
+    uint64_t push_before = result.eval.action_push_doorway_count;
+    double escape_before = result.eval.escape_rate;
+
+    tagworld_ablate_learned_policy_edges(&e, &tn);
+
+    TagWorldConfig eval_cfg = cfg;
+    eval_cfg.map_id = TAGWORLD_MAP_TOOL_H3;
+    TagWorldMetrics ablated;
+    expect_true(tagworld_run_frozen_eval_only(&e, &tn, &eval_cfg, &ablated) == 0,
+                "honest ablated eval on H3");
+    expect_true(ablated.action_push_doorway_count < push_before ||
+                    ablated.escape_rate < escape_before,
+                "honest ablation reduces push or escape");
     nerva_engine_free(&e);
 }
 
@@ -1729,13 +1881,17 @@ int test_tagworld_run(void) {
     test_eligibility_run_escape_strengthens_run_edge();
     test_tagworld_pure_feedback_eligibility_ablation_reduces_push();
     test_tagworld_pure_feedback_no_dynamics_pretrain();
-    test_tagworld_pure_feedback_g_all_gate_seeds();
+    test_tagworld_legacy_pure_feedback_g_records_fallback_contamination();
     test_tagworld_held_out_maps_push_then_run_wins();
     test_tagworld_map_h_honest_stage1_gate();
     test_tagworld_honest_no_chokepoint_symbols();
     test_tagworld_honest_primitive_edges_zero_after_pretrain();
     test_tagworld_honest_zero_start_equals_baseline();
     test_tagworld_honest_pure_feedback_no_oracle();
+    test_tagworld_honest_eval_zero_scores_are_not_random_fallback();
+    test_tagworld_honest_quiesce_resets_refractory_activation_count();
+    test_tagworld_honest_generalization_runs_on_calibrated_maps();
+    test_tagworld_honest_generalization_ablation_drops_eval();
     test_tagworld_viz_no_state_change();
     test_tagworld_replay_deterministic();
     return g_failures;

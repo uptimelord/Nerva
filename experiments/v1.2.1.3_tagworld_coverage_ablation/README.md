@@ -5,9 +5,9 @@
 
 ## Problem
 
-v1.2.1.2 proves zero-start pure-feedback acquisition on held-out map G when **full coverage**
-exploration runs for the entire learn window. That is real learning, but the exploration schedule
-is engineered:
+v1.2.1.2 originally reported zero-start pure-feedback acquisition on held-out map G when **full
+coverage** exploration runs for the entire learn window. Strict v1.3 re-audit marks that evidence as
+legacy/fallback-contaminated, and the exploration schedule was engineered:
 
 ```text
 Nerva can acquire the policy when the environment guarantees sufficient action/consequence coverage.

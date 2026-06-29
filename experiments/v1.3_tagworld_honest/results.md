@@ -1,121 +1,123 @@
-# v1.3 Honest TagWorld — Stage 1 Results (revive the task)
+# v1.3 Honest TagWorld - Results
 
-**Decision:** Repeat (Stage 2 passes; Stage 3 wiring in progress)
+**Decision:** Repeat (bounded Stage 3 evidence committed; not promoted yet)
 Date: 2026-06-29
 Gate: [benchmarks/tagworld_honest/gate.md](../../benchmarks/tagworld_honest/gate.md)
 
-## What Stage 1 did
+## Why This Exists
 
-Added `--honest` / `cfg.honest` (carried onto `TagWorld.honest`). Behind the flag, the two
-seeker-freeze sites are disabled:
-- avoidance-bubble in `tagworld_cell_walkable_mut` (tagworld.c:334) — froze the seeker and barred
-  the runner from ever getting adjacent (so CAUGHT was impossible)
-- tool-map early-return in `tagworld_step_seeker` (tagworld.c:604)
+v1.2 / v1.2.1.x TagWorld "generalization" was engineering progress, not clean no-handholding
+learning evidence:
 
-With both off, the seeker pursues on tool maps exactly like it already does on the corridor map.
+- legacy tool maps froze or neutered pursuit
+- abstract tool events exposed chokepoint predicates directly
+- pure-feedback G depended on engineered coverage/eligibility and, under stricter accounting, eval
+  action-score fallback contamination
 
-## Measurement (random baseline, 300 episodes/seed)
+v1.3 adds `--honest`: live seeker, primitive perception, zero-weight primitive-feature -> action
+edges, native outcome feedback, no forced coverage.
 
-| Map | legacy random escape | honest random escape | honest caught | honest timeout |
-|-----|----------------------|----------------------|---------------|----------------|
-| A   | 0.637                | **0.000**            | 0             | 300            |
-| B   | 1.000                | **0.000**            | 300           | 0              |
-| C   | 1.000                | **0.000**            | 0             | 300            |
-| G   | 0.637                | **0.077**            | 0             | 300            |
+## Stage 1 - Honest World Calibration
 
-Pretrained ("oracle-ish") policy under honest also collapses to 0% escape: on A/G it loops selecting
-a no-op `PUSH_BLOCK_TO_DOORWAY` (~62×/episode) and times out; the chokepoint-symbol policy trained
-under the frozen world mis-fires once the seeker actually moves.
+Maps `H`, `H2`, and `H3` are the calibrated honest pursuit family. `H` and `H2` are train maps;
+`H3` is held out.
 
-## Diagnosis (the trace says)
+Calibration check: 300 random episodes and 200 scripted push->run episodes per map.
 
-The avoidance-bubble was not only neutering the seeker — it was **the mechanism that made the maps
-solvable**. Remove it and:
+| Map | Oracle push->run | Run-only | Random escape | Random CAUGHT | Stage 1 |
+|-----|------------------|----------|---------------|---------------|---------|
+| H   | 1.000 | 0.000 | 0.487 | 154/300 | pass |
+| H2  | 1.000 | 0.000 | 0.487 | 154/300 | pass |
+| H3  | 1.000 | 0.000 | 0.487 | 154/300 | pass |
 
-- random play never reaches `safe` within the 64-tick budget (A/C/G → timeout), or the seeker
-  simply catches the runner (B → caught). Baseline collapses to ~0 on every map.
-- the failure mode is **different per map** (timeout vs caught), confirming none of A/B/C/G was
-  designed or calibrated for live pursuit.
+These maps satisfy the task requirement: the tool is necessary enough that run-only loses, sufficient
+when pushed into the chokepoint, and random play has non-saturated headroom.
 
-So the Stage 1 gate (random baseline 20–80%, caught > 0, oracle ≥ 95%) **cannot be met by simply
-unfreezing the existing maps**. The geometry, spawns, seeker cadence, and tick budget were all tuned
-around a static seeker.
+## Stage 2 - Zero Starting Knowledge
 
-## Calibration attempt: half-speed seeker (every-other-tick)
+Primitive perception contains seeker bearing, seeker distance, block adjacency, wall adjacency, and
+`RUNNER_AT_SAFE`. The five legacy chokepoint symbols are not emitted under `--honest`.
 
-Added `TagWorld.seeker_tick_parity` — under honest the seeker moves every other tick (the standard
-pursuit slowdown). Re-measured random escape (300 eps):
-
-| Map | honest full-speed | honest half-speed |
-|-----|-------------------|-------------------|
-| A   | 0.000             | 0.000             |
-| B   | 0.000             | 0.000             |
-| C   | 0.000             | 0.000             |
-| G   | 0.077             | 0.243             |
-
-Half-speed lifts only G (0.08 → 0.24). A/B/C stay at **0** regardless of seeker speed → their
-failure is **reachability/geometry**, not chase speed. Seeker cadence is a real knob (kept) but it
-cannot rescue maps whose `safe` is simply not reachable by a random player in budget once the
-avoidance-bubble (which also freed the runner) is gone.
-
-**Conclusion:** the existing A/B/C/G maps cannot host the honest task. Stage 1 needs a purpose-built
-pursuit map, not a retrofit.
-
-## This is honest, not a dead end
-
-The `--honest` plumbing works and is correct (the seeker really does pursue; the block still seals
-routes via the existing block-cell non-walkable check). What's missing is a **map actually designed
-for tool-use under pursuit**: a single chokepoint the seeker must cross, a `safe` the runner can
-reach *without* the chokepoint, a block that can seal it, and timing where running-without-sealing
-sometimes loses but sealing-then-running reliably wins.
-
-## Next (Stage 1b — required before Stage 2/3)
-
-Design **one** dedicated honest pursuit map (call it `H`) and calibrate jointly until the scripted
-push→run oracle escapes ≥95% AND random escape lands 20–80% AND caught > 0. Likely knobs:
-- seeker cadence (every-other-tick is the standard pursuit slowdown; needs a cadence field, not
-  `w->tick`, because the baseline loop doesn't set `w->tick`)
-- runner/seeker/block/safe spawn distances vs tick budget
-- one true chokepoint with a non-chokepoint route to `safe`
-
-Stages 2 (primitive perception) and 3 (native-feedback credit) are unblocked only once a Stage-1
-map exists where the task is real.
-
-## Stage 1b — purpose-built map H (2026-06-29)
-
-Map `H` (`TAGWORLD_MAP_TOOL_H`, `--map H`) replaces A/B/C/G for honest pursuit calibration.
-
-**Geometry:** wall row at y=2 with single doorway (3,2). Block starts at (4,3) — east of the choke
-column — so the seeker can cross while the doorway is open. Runner (5,3) must reach the block before
-sealing. Safe (1,5) stays in the runner region.
-
-**Calibration:** `seeker_steps_per_tick=2` on map H (set in `tagworld_reset_tool_spawns`).
-
-**Gate measurement** (`test_tagworld_map_h_honest_stage1_gate`, 300 eps random / 200 eps oracle):
-
-| Metric | Value | Stage 1 gate |
-|--------|-------|--------------|
-| Oracle push→run escape | 100% | ≥95% |
-| Random escape | 48.7% | 20–80% |
-| Random CAUGHT | 154/300 | >0 |
-| Run-only escape | 0% | below oracle −10pp |
-
-**Root cause fixed:** block at (3,3) blocked the only south exit from the doorway column, so the
-seeker could never enter the runner region (pursuit was fake). Moving block to (4,3) fixes crossing.
-
-## Stage 2 — primitive perception, zero starting knowledge (2026-06-29)
-
-**Implementation:** 14 geometry feature nodes (seeker bearing/dist, block-adjacency, wall-adjacency)
-plus `RUNNER_AT_SAFE`, dense `feature→action` edges at weight 0, no oracle pretrain under `--honest`.
-
-**Gate measurement** (`test_tagworld_honest_*`, map H, seed 1):
+Checks:
 
 | Check | Result |
 |-------|--------|
-| Chokepoint symbols absent | pass (simulated episode scan) |
+| Chokepoint symbols absent | pass (`test_tagworld_honest_no_chokepoint_symbols`) |
 | Primitive policy edges zero after pretrain | pass |
-| Zero-weight escape == random baseline | 0.4967 == 0.4967 |
+| Zero-weight model equals random baseline on H | 0.4967 == 0.4967 |
 
-**Next:** Stage 3 — native outcome credit on honest primitive traces (`--honest --pure-feedback`),
-frozen eval generalization. Legacy A/B/C/G may Kill unless pursuit-calibrated; map H is the train
-anchor.
+## Stage 2.5 - Reset/Fallback Hardening
+
+Root cause fixed: `tagworld_nerva_quiesce_engine()` reset `tick` and `last_fired_tick` between
+episodes but did not reset `activation_count`. Core refractory logic treats `activation_count > 0`
+as "has fired before", so resetting `tick` to 0 left tick-0 honest primitive features refractory in
+later episodes. That made eval action scores disappear.
+
+Fix: reset `activation_count` with the rest of episode-local node state.
+
+Guardrails:
+
+- `test_tagworld_honest_quiesce_resets_refractory_activation_count`
+- `test_tagworld_honest_eval_zero_scores_are_not_random_fallback`
+- honest eval all-zero ties are deterministic, counted as `action_tie_zero_score_count`, and do not
+  increment `action_score_fallback_count`
+- `--honest` disables forced coverage (`coverage_episodes_resolved=0`)
+
+## Legacy v1.2 G Re-Audit
+
+The old pure-feedback G gate is retained only as legacy evidence. Under strict fallback accounting it
+is contaminated:
+
+| seed | eval_escape | eval_random | eval_action_score_fallback_count |
+|------|-------------|-------------|----------------------------------|
+| 1    | 1.000 | 0.590 | 100 |
+| 5    | 0.000 | 0.740 | 6400 |
+| 11   | 1.000 | 0.690 | 100 |
+
+The unit test is now `test_tagworld_legacy_pure_feedback_g_records_fallback_contamination`, not a
+promote gate.
+
+## Stage 3 - Honest Learning + Held-Out Generalization
+
+Train maps: `H`, `H2`.
+Held-out eval map: `H3`.
+
+Command:
+
+```powershell
+.\build\nerva_tagworld.exe --generalization --honest --pure-feedback --mode action --eval-map H3 --learn-episodes 1000 --eval-episodes 200 --fast --baseline --seed <N>
+```
+
+Evidence:
+
+| seed | train_escape | eval_escape | eval_random | eval_mut/ep | eval_fallbacks | eval PUSH_BLOCK | eval PUSH_TO_DOORWAY |
+|------|--------------|-------------|-------------|-------------|----------------|-----------------|----------------------|
+| 1    | 0.721 | 1.000 | 0.500 | 0.00 | 0 | 200 | 0 |
+| 5    | 0.618 | 1.000 | 0.505 | 0.00 | 0 | 200 | 0 |
+| 11   | 0.831 | 1.000 | 0.520 | 0.00 | 0 | 0 | 200 |
+| 17   | 0.669 | 1.000 | 0.535 | 0.00 | 0 | 200 | 0 |
+| 23   | 0.643 | 1.000 | 0.485 | 0.00 | 0 | 200 | 0 |
+
+Additional checks:
+
+- `tagworld_debug_oracle_online_train_pair_rounds() == 0`
+- `coverage_episodes_resolved == 0`
+- `test_tagworld_honest_generalization_ablation_drops_eval`
+- `test_tagworld_honest_no_chokepoint_symbols`
+- full `.\build.ps1` test suite passes
+
+## Claim Discipline Draft
+
+```text
+Supported if promoted:
+               Nerva learns a primitive-feature -> action policy from native outcome feedback on
+               calibrated honest TagWorld maps H/H2 and transfers to held-out H3, with no oracle
+               train_pair, no forced coverage, no eval mutations, and zero eval action-score
+               fallbacks.
+Not supported: broad world/model generalization; unsupervised edge discovery; learned motor plans;
+               arbitrary tool use; modalities beyond this TagWorld substrate.
+Evidence:      Stage 1/2/3 metrics above, reset/fallback guardrail tests, ablation test, full suite.
+Residuals:     feature->action edge skeleton is predeclared at weight 0; PUSH_BLOCK and
+               PUSH_BLOCK_TO_DOORWAY can both solve H3 when the block is adjacent in the doorway
+               direction; H2 is a timing/safe-target variant, not a wholly new topology.
+```

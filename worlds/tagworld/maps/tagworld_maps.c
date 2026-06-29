@@ -138,6 +138,31 @@ static void tagworld_init_tool_h(TagWorld *w, int grid) {
     w->map_id = TAGWORLD_MAP_TOOL_H;
 }
 
+static void tagworld_init_tool_h2(TagWorld *w, int grid) {
+    /* Honest live-pursuit train variant. Same proven seal mechanics as H,
+     * with a different safe target so route timing differs without adding a
+     * new motor-plan dependency. */
+    tagworld_paint_border(w, grid);
+    tagworld_set_wall(w, 1, 2);
+    tagworld_set_wall(w, 2, 2);
+    tagworld_set_wall(w, 4, 2);
+    tagworld_set_wall(w, 5, 2);
+    tagworld_place_chokepoint(w, (TagWorldPos){3, 2}, (TagWorldPos){2, 5});
+    w->map_id = TAGWORLD_MAP_TOOL_H2;
+}
+
+static void tagworld_init_tool_h3(TagWorld *w, int grid) {
+    /* Honest live-pursuit held-out variant. Shifted left from H, removing
+     * H's initial east-wall cue while retaining calibrated pursuit. */
+    tagworld_paint_border(w, grid);
+    tagworld_set_wall(w, 1, 2);
+    tagworld_set_wall(w, 3, 2);
+    tagworld_set_wall(w, 4, 2);
+    tagworld_set_wall(w, 5, 2);
+    tagworld_place_chokepoint(w, (TagWorldPos){2, 2}, (TagWorldPos){1, 5});
+    w->map_id = TAGWORLD_MAP_TOOL_H3;
+}
+
 static void tagworld_init_tool_e(TagWorld *w, int grid) {
     tagworld_init_tool_a(w, grid);
     w->map_id = TAGWORLD_MAP_TOOL_E;
@@ -151,7 +176,8 @@ static void tagworld_init_tool_f(TagWorld *w, int grid) {
 int tagworld_map_is_tool(TagWorldMapId map_id) {
     return (map_id >= TAGWORLD_MAP_TOOL_A && map_id <= TAGWORLD_MAP_TOOL_F) ||
            map_id == TAGWORLD_MAP_TOOL_D_ALIAS || map_id == TAGWORLD_MAP_TOOL_G ||
-           map_id == TAGWORLD_MAP_TOOL_H;
+           map_id == TAGWORLD_MAP_TOOL_H || map_id == TAGWORLD_MAP_TOOL_H2 ||
+           map_id == TAGWORLD_MAP_TOOL_H3;
 }
 
 int tagworld_map_is_train_tool(TagWorldMapId map_id) {
@@ -161,7 +187,16 @@ int tagworld_map_is_train_tool(TagWorldMapId map_id) {
 int tagworld_map_is_held_out_tool(TagWorldMapId map_id) {
     return (map_id >= TAGWORLD_MAP_TOOL_D && map_id <= TAGWORLD_MAP_TOOL_F) ||
            map_id == TAGWORLD_MAP_TOOL_D_ALIAS || map_id == TAGWORLD_MAP_TOOL_G ||
-           map_id == TAGWORLD_MAP_TOOL_H;
+           map_id == TAGWORLD_MAP_TOOL_H || map_id == TAGWORLD_MAP_TOOL_H2 ||
+           map_id == TAGWORLD_MAP_TOOL_H3;
+}
+
+int tagworld_map_is_honest_train_tool(TagWorldMapId map_id) {
+    return map_id == TAGWORLD_MAP_TOOL_H || map_id == TAGWORLD_MAP_TOOL_H2;
+}
+
+int tagworld_map_is_honest_held_out_tool(TagWorldMapId map_id) {
+    return map_id == TAGWORLD_MAP_TOOL_H3;
 }
 
 int tagworld_map_is_d_geometry_alias(TagWorldMapId map_id) {
@@ -173,6 +208,14 @@ TagWorldMapId tagworld_generalization_train_map(uint32_t episode) {
         TAGWORLD_MAP_TOOL_A,
         TAGWORLD_MAP_TOOL_B,
         TAGWORLD_MAP_TOOL_C,
+    };
+    return train[episode % (sizeof(train) / sizeof(train[0]))];
+}
+
+TagWorldMapId tagworld_honest_generalization_train_map(uint32_t episode) {
+    static const TagWorldMapId train[] = {
+        TAGWORLD_MAP_TOOL_H,
+        TAGWORLD_MAP_TOOL_H2,
     };
     return train[episode % (sizeof(train) / sizeof(train[0]))];
 }
@@ -197,6 +240,10 @@ const char *tagworld_generalization_map_letter(TagWorldMapId map_id) {
         return "G";
     case TAGWORLD_MAP_TOOL_H:
         return "H";
+    case TAGWORLD_MAP_TOOL_H2:
+        return "H2";
+    case TAGWORLD_MAP_TOOL_H3:
+        return "H3";
     default:
         return "?";
     }
@@ -238,6 +285,12 @@ void tagworld_init_map_for_id(TagWorld *w, TagWorldMapId map_id, int grid) {
         break;
     case TAGWORLD_MAP_TOOL_H:
         tagworld_init_tool_h(w, grid);
+        break;
+    case TAGWORLD_MAP_TOOL_H2:
+        tagworld_init_tool_h2(w, grid);
+        break;
+    case TAGWORLD_MAP_TOOL_H3:
+        tagworld_init_tool_h3(w, grid);
         break;
     case TAGWORLD_MAP_TOOL_A:
     default:
@@ -311,6 +364,24 @@ void tagworld_reset_tool_spawns(TagWorld *w, TagWorldMapId map_id) {
         w->seeker.x = 3;
         w->seeker.y = 1;
         w->block.x = 4;
+        w->block.y = 3;
+        w->seeker_steps_per_tick = 2u;
+        break;
+    case TAGWORLD_MAP_TOOL_H2:
+        w->runner.x = 5;
+        w->runner.y = 3;
+        w->seeker.x = 3;
+        w->seeker.y = 1;
+        w->block.x = 4;
+        w->block.y = 3;
+        w->seeker_steps_per_tick = 2u;
+        break;
+    case TAGWORLD_MAP_TOOL_H3:
+        w->runner.x = 4;
+        w->runner.y = 3;
+        w->seeker.x = 2;
+        w->seeker.y = 1;
+        w->block.x = 3;
         w->block.y = 3;
         w->seeker_steps_per_tick = 2u;
         break;

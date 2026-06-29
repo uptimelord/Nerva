@@ -20,19 +20,19 @@ static void print_usage(const char *prog) {
     printf("  --max-ticks N       (default 64)\n");
     printf("  --trace-every N     (default 1000)\n");
     printf("  --mode MODE         observer|prediction|action (default observer)\n");
-    printf("  --map MAP           corridor|tool (default corridor)\n");
+    printf("  --map MAP           corridor|tool|A|B|C|D|E|F|G|H|H2|H3 (default corridor)\n");
     printf("  --fast              no rendering, summary only\n");
     printf("  --viz               enable terminal ASCII visualizer\n");
     printf("  --baseline          track random action baseline (action mode)\n");
     printf("  --online-tool       outcome-driven tool acquisition (no action pretrain)\n");
     printf("  --online-frozen     learn online then frozen eval (200+100 episodes)\n");
-    printf("  --generalization    train maps A/B/C, frozen eval on held-out map\n");
+    printf("  --generalization    train maps A/B/C (or H/H2 under --honest), frozen eval held-out\n");
     printf("  --pure-feedback     learn from traces + outcomes only (no oracle train_pair)\n");
     printf("  --honest            v1.3 honest mode: live pursuing seeker on tool maps\n");
     printf("  --coverage-episodes N  per-episode valid-action coverage during early learn\n");
     printf("                         (0 = epsilon only; unset defaults to learn window in pure-feedback)\n");
     printf("  --coverage-until-push-block N  coverage until N push->block observations\n");
-    printf("  --eval-map MAP      held-out eval map D|E|F (default D)\n");
+    printf("  --eval-map MAP      held-out eval map D|E|F|G or H3 under --honest\n");
     printf("  --learn-episodes N  online learn phase length (default 200)\n");
     printf("  --eval-episodes N   frozen eval phase length (default 100)\n");
     printf("  --action-score-trace  log action score fallback traces to stderr\n");
@@ -102,6 +102,14 @@ static int parse_map(const char *s, TagWorldMapId *map_id) {
     }
     if (strcmp(s, "tool_h") == 0 || strcmp(s, "H") == 0) {
         *map_id = TAGWORLD_MAP_TOOL_H;
+        return 0;
+    }
+    if (strcmp(s, "tool_h2") == 0 || strcmp(s, "H2") == 0) {
+        *map_id = TAGWORLD_MAP_TOOL_H2;
+        return 0;
+    }
+    if (strcmp(s, "tool_h3") == 0 || strcmp(s, "H3") == 0) {
+        *map_id = TAGWORLD_MAP_TOOL_H3;
         return 0;
     }
     return -1;

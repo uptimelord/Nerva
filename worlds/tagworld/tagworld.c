@@ -119,6 +119,12 @@ const char *tagworld_map_name(TagWorldMapId map_id) {
         return "tool_d_alias";
     case TAGWORLD_MAP_TOOL_G:
         return "tool_g";
+    case TAGWORLD_MAP_TOOL_H:
+        return "tool_h";
+    case TAGWORLD_MAP_TOOL_H2:
+        return "tool_h2";
+    case TAGWORLD_MAP_TOOL_H3:
+        return "tool_h3";
     case TAGWORLD_MAP_CORRIDOR:
     default:
         return "corridor";
@@ -143,6 +149,11 @@ void tagworld_config_defaults(TagWorldConfig *cfg) {
 }
 
 static void tagworld_resolve_coverage_config(TagWorldConfig *cfg) {
+    if (cfg->honest) {
+        cfg->online_coverage_episodes = 0u;
+        cfg->online_coverage_until_push_block = 0u;
+        return;
+    }
     if (cfg->online_coverage_until_push_block > 0u) {
         return;
     }
@@ -1164,6 +1175,12 @@ TagWorldAction tagworld_nerva_select_action_scored(NervaEngine *e, TagWorldNerva
             }
         }
         if (all_zero) {
+            if (metrics) {
+                metrics->action_tie_zero_score_count++;
+            }
+            if (g_online_phase == TAGWORLD_ONLINE_EVAL) {
+                goto deterministic_select;
+            }
             uint32_t rng = g_tagworld_rng;
             TagWorldAction pick = tagworld_random_action(w, &rng);
             g_tagworld_rng = rng;
@@ -1182,6 +1199,7 @@ TagWorldAction tagworld_nerva_select_action_scored(NervaEngine *e, TagWorldNerva
         }
     }
 
+deterministic_select: ;
     TagWorldAction best = TAG_ACTION_WAIT;
     int32_t best_score = NERVA_I32_SCORE_MIN;
     uint32_t best_id = UINT32_MAX;
@@ -2046,7 +2064,6 @@ static TagWorldAction tagworld_select_action_for_episode(NervaEngine *e, TagWorl
         }
 
         if (all_zero) {
-            m->action_tie_zero_score_count++;
             if (cfg->action_score_trace) {
                 fprintf(stderr, "ACTION_TIE_ZERO_SCORE tie_break_action=%d explored=%d\n",
                         (int)chosen, explored ? 1 : 0);
@@ -2291,6 +2308,7 @@ static void tagworld_nerva_quiesce_engine(NervaEngine *e) {
     for (uint32_t i = 0; i < e->node_count; ++i) {
         e->nodes[i].v = e->nodes[i].v_rest;
         e->nodes[i].last_fired_tick = 0;
+        e->nodes[i].activation_count = 0;
         e->nodes[i].memory_charge = 0.0f;
     }
     e->tick = 0;
@@ -2658,7 +2676,9 @@ static int tagworld_run_rotating_train_episode_loop(NervaEngine *e, TagWorldNerv
                                                     TagWorldMetrics *metrics, FILE *replay_out) {
     for (uint32_t ep = 0; ep < cfg->episodes; ++ep) {
         TagWorldConfig ep_cfg = *cfg;
-        ep_cfg.map_id = tagworld_generalization_train_map((uint32_t)metrics->episodes);
+        ep_cfg.map_id = cfg->honest
+                            ? tagworld_honest_generalization_train_map((uint32_t)metrics->episodes)
+                            : tagworld_generalization_train_map((uint32_t)metrics->episodes);
         tagworld_run_episode(e, tn, w, &ep_cfg, metrics, replay_out);
         if (cfg->trace_every > 0 && ((ep + 1) % cfg->trace_every) == 0 && !cfg->fast) {
             nerva_trace_print_recent(e, stdout, 8);
@@ -2778,7 +2798,8 @@ static int tagworld_run_generalization(NervaEngine *e, const TagWorldConfig *cfg
     eval.mode = cfg->mode;
 
     tagworld_nerva_init(e, &tn);
-    tagworld_init_map_for_id(&w, TAGWORLD_MAP_TOOL_A, cfg->grid);
+    tagworld_init_map_for_id(&w, cfg->honest ? TAGWORLD_MAP_TOOL_H : TAGWORLD_MAP_TOOL_A,
+                             cfg->grid);
 
     if (cfg->snapshot_in) {
         if (nerva_persist_load(e, cfg->snapshot_in) != 0) {
@@ -2789,7 +2810,7 @@ static int tagworld_run_generalization(NervaEngine *e, const TagWorldConfig *cfg
 
     TagWorldConfig gen_cfg = *cfg;
     gen_cfg.tool_generalization = true;
-    gen_cfg.map_id = TAGWORLD_MAP_TOOL_A;
+    gen_cfg.map_id = cfg->honest ? TAGWORLD_MAP_TOOL_H : TAGWORLD_MAP_TOOL_A;
     g_train_cumulative_push_block_obs = 0u;
     tagworld_resolve_coverage_config(&gen_cfg);
 
@@ -2828,7 +2849,11 @@ static int tagworld_run_generalization(NervaEngine *e, const TagWorldConfig *cfg
     tagworld_policy_snap_save(e, &g_online_learned_snap);
 
     TagWorldMapId eval_map = cfg->generalization_eval_map;
-    if (!tagworld_map_is_held_out_tool(eval_map)) {
+    if (cfg->honest) {
+        if (!tagworld_map_is_honest_held_out_tool(eval_map)) {
+            eval_map = TAGWORLD_MAP_TOOL_H3;
+        }
+    } else if (!tagworld_map_is_held_out_tool(eval_map)) {
         eval_map = TAGWORLD_MAP_TOOL_D;
     }
 

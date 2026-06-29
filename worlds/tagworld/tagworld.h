@@ -30,7 +30,9 @@ typedef enum TagWorldMapId {
     TAGWORLD_MAP_TOOL_F = 6,
     TAGWORLD_MAP_TOOL_D_ALIAS = 7,
     TAGWORLD_MAP_TOOL_G = 8,
-    TAGWORLD_MAP_TOOL_H = 9 /* v1.3: honest live-pursuit map (seal-then-run is necessary AND sufficient) */
+    TAGWORLD_MAP_TOOL_H = 9,  /* v1.3: honest live-pursuit train anchor */
+    TAGWORLD_MAP_TOOL_H2 = 10, /* v1.3: honest live-pursuit train variant */
+    TAGWORLD_MAP_TOOL_H3 = 11  /* v1.3: honest live-pursuit held-out variant */
 } TagWorldMapId;
 
 typedef enum TagWorldCell {

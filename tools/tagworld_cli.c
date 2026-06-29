@@ -28,6 +28,7 @@ static void print_usage(const char *prog) {
     printf("  --online-frozen     learn online then frozen eval (200+100 episodes)\n");
     printf("  --generalization    train maps A/B/C, frozen eval on held-out map\n");
     printf("  --pure-feedback     learn from traces + outcomes only (no oracle train_pair)\n");
+    printf("  --honest            v1.3 honest mode: live pursuing seeker on tool maps\n");
     printf("  --coverage-episodes N  per-episode valid-action coverage during early learn\n");
     printf("                         (0 = epsilon only; unset defaults to learn window in pure-feedback)\n");
     printf("  --coverage-until-push-block N  coverage until N push->block observations\n");
@@ -99,6 +100,10 @@ static int parse_map(const char *s, TagWorldMapId *map_id) {
         *map_id = TAGWORLD_MAP_TOOL_G;
         return 0;
     }
+    if (strcmp(s, "tool_h") == 0 || strcmp(s, "H") == 0) {
+        *map_id = TAGWORLD_MAP_TOOL_H;
+        return 0;
+    }
     return -1;
 }
 
@@ -148,6 +153,8 @@ int main(int argc, char **argv) {
             cfg.tool_generalization = true;
         } else if (strcmp(argv[i], "--pure-feedback") == 0) {
             cfg.pure_feedback = true;
+        } else if (strcmp(argv[i], "--honest") == 0) {
+            cfg.honest = true;
         } else if (strcmp(argv[i], "--coverage-episodes") == 0 && i + 1 < argc) {
             cfg.online_coverage_episodes = (uint32_t)strtoul(argv[++i], NULL, 10);
         } else if (strcmp(argv[i], "--coverage-until-push-block") == 0 && i + 1 < argc) {

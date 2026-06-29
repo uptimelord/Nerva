@@ -29,7 +29,8 @@ typedef enum TagWorldMapId {
     TAGWORLD_MAP_TOOL_E = 5,
     TAGWORLD_MAP_TOOL_F = 6,
     TAGWORLD_MAP_TOOL_D_ALIAS = 7,
-    TAGWORLD_MAP_TOOL_G = 8
+    TAGWORLD_MAP_TOOL_G = 8,
+    TAGWORLD_MAP_TOOL_H = 9 /* v1.3: honest live-pursuit map (seal-then-run is necessary AND sufficient) */
 } TagWorldMapId;
 
 typedef enum TagWorldCell {
@@ -81,6 +82,8 @@ typedef struct TagWorld {
     TagWorldOutcome outcome;
     uint32_t episode_variant;
     TagWorldMapId map_id;
+    bool honest; /* v1.3: live pursuing seeker on tool maps (no avoidance-bubble freeze) */
+    uint8_t seeker_steps_per_tick; /* v1.3: honest pursuit speed (calibration knob; 1 = runner speed) */
 } TagWorld;
 
 typedef struct TagWorldEventIds {
@@ -174,9 +177,18 @@ typedef struct TagWorldCreditTrace {
     TagWorldDecision decisions[TAGWORLD_MAX_DECISIONS];
 } TagWorldCreditTrace;
 
+#define TAGWORLD_HONEST_FEATURE_COUNT 17u /* bearing, dist×4, block-adj, block-far, wall-adj */
+#define TAGWORLD_HONEST_POLICY_FEATURE_COUNT 18u /* above + at-safe (ev.runner_at_safe) */
+
+typedef struct TagWorldHonestIds {
+    uint32_t feature[TAGWORLD_HONEST_FEATURE_COUNT];
+    uint32_t policy_edge[TAGWORLD_HONEST_POLICY_FEATURE_COUNT][TAG_ACTION_COUNT];
+} TagWorldHonestIds;
+
 typedef struct TagWorldNerva {
     TagWorldEventIds ev;
     TagWorldEdgeIds edge;
+    TagWorldHonestIds honest;
     TagWorldAction last_action;
     TagWorldAction episode_first_action;
     bool episode_used_push_doorway;
@@ -214,6 +226,7 @@ typedef struct TagWorldConfig {
     bool action_score_trace;
     bool tool_generalization;
     bool pure_feedback;
+    bool honest; /* v1.3: honest mode — live seeker, primitive perception, native-feedback credit */
     TagWorldMapId generalization_eval_map;
     TagWorldMapId map_id;
 } TagWorldConfig;

@@ -15,6 +15,7 @@
 #include "nerva_prediction.h"
 #include "nerva_trace.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -864,6 +865,188 @@ static void test_tagworld_map_g_headroom(void) {
     expect_true(worst_random >= 0.20, "map G random baseline leaves pressure (>=20%)");
 }
 
+static void test_tagworld_map_h_honest_stage1_gate(void) {
+    TagWorldConfig cfg = tagworld_tool_test_config();
+    cfg.map_id = TAGWORLD_MAP_TOOL_H;
+    cfg.honest = true;
+
+    uint32_t oracle_escaped = 0u;
+    for (uint32_t ep = 0u; ep < 200u; ++ep) {
+        TagWorld w;
+        tagworld_reset_for_config(&w, &cfg, ep);
+        int outcome =
+            tagworld_simulate_with_policy(&w, tagworld_push_then_run_policy, NULL, cfg.max_ticks);
+        if (outcome == TAGWORLD_OUTCOME_ESCAPED) {
+            oracle_escaped++;
+        }
+    }
+
+    uint32_t rand_escaped = 0u;
+    uint32_t rand_caught = 0u;
+    uint32_t rand_timeout = 0u;
+    for (uint32_t ep = 0u; ep < 300u; ++ep) {
+        TagWorld w;
+        tagworld_reset_for_config(&w, &cfg, ep);
+        uint32_t rng = cfg.seed ^ (ep * 2654435761u);
+        for (uint32_t t = 0u; t < cfg.max_ticks && !w.done; ++t) {
+            TagWorldAction action = tagworld_random_action(&w, &rng);
+            tagworld_apply_action(&w, action);
+            tagworld_step_seeker(&w);
+            tagworld_check_outcome(&w);
+        }
+        if (!w.done) {
+            w.outcome = TAGWORLD_OUTCOME_TIMEOUT;
+        }
+        if (w.outcome == TAGWORLD_OUTCOME_ESCAPED) {
+            rand_escaped++;
+        } else if (w.outcome == TAGWORLD_OUTCOME_CAUGHT) {
+            rand_caught++;
+        } else {
+            rand_timeout++;
+        }
+    }
+
+    double oracle_rate = (double)oracle_escaped / 200.0;
+    double random_rate = (double)rand_escaped / 300.0;
+    double run_only_rate = tagworld_baseline_always_run_escape_rate(&cfg, 300u);
+
+    fprintf(stderr,
+            "MAP_H honest stage1: oracle=%.3f run_only=%.3f random=%.3f caught=%u timeout=%u\n",
+            oracle_rate, run_only_rate, random_rate, rand_caught, rand_timeout);
+
+    expect_true(oracle_rate >= 0.95, "map H honest oracle push->run escapes >=95%");
+    expect_true(random_rate >= 0.20 && random_rate <= 0.80,
+                "map H honest random escape in 20-80% band");
+    expect_true(rand_caught > 0u, "map H honest random play produces CAUGHT");
+    expect_true(run_only_rate < oracle_rate - 0.10,
+                "map H seal-then-run beats run-only (tool use necessary)");
+}
+
+static int tagworld_test_fire_log_contains(const NervaEngine *e, uint32_t node_id) {
+    for (uint32_t i = 0; i < e->fire_log_count; ++i) {
+        if (e->fire_log[i].node_id == node_id) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void test_tagworld_honest_no_chokepoint_symbols(void) {
+    TagWorldConfig cfg = tagworld_tool_test_config();
+    cfg.map_id = TAGWORLD_MAP_TOOL_H;
+    cfg.honest = true;
+    cfg.max_ticks = 64u;
+    cfg.seed = 1u;
+
+    NervaEngine e;
+    expect_true(nerva_engine_init(&e, nerva_config_test()) == 0, "honest no-choke init");
+    TagWorldNerva tn;
+    tagworld_nerva_init(&e, &tn);
+
+    TagWorld w;
+    tagworld_reset_for_config(&w, &cfg, 0u);
+    uint32_t rng = cfg.seed;
+    TagWorldMetrics m;
+    memset(&m, 0, sizeof(m));
+
+    bool saw_choke = false;
+    for (uint32_t t = 0u; t < cfg.max_ticks && !w.done; ++t) {
+        w.tick = t;
+        nerva_debug_clear_fire_log(&e);
+        tagworld_nerva_emit_state_events(&e, &tn, &w, &m);
+        if (tagworld_test_fire_log_contains(&e, tn.ev.chokepoint_detected) ||
+            tagworld_test_fire_log_contains(&e, tn.ev.seeker_route_uses_chokepoint) ||
+            tagworld_test_fire_log_contains(&e, tn.ev.block_can_reach_chokepoint) ||
+            tagworld_test_fire_log_contains(&e, tn.ev.block_at_chokepoint) ||
+            tagworld_test_fire_log_contains(&e, tn.ev.path_blocked_by_tool)) {
+            saw_choke = true;
+            break;
+        }
+        TagWorldAction action = tagworld_random_action(&w, &rng);
+        tagworld_apply_action(&w, action);
+        tagworld_step_seeker(&w);
+        tagworld_check_outcome(&w);
+    }
+
+    expect_true(!saw_choke, "honest perception never emits chokepoint oracle symbols");
+    nerva_engine_free(&e);
+}
+
+static void test_tagworld_honest_primitive_edges_zero_after_pretrain(void) {
+    TagWorldConfig cfg = tagworld_tool_test_config();
+    cfg.map_id = TAGWORLD_MAP_TOOL_H;
+    cfg.honest = true;
+    cfg.mode = TAGWORLD_MODE_ACTION;
+    cfg.episodes = 0u;
+    cfg.seed = 1u;
+
+    NervaEngine e;
+    expect_true(nerva_engine_init(&e, nerva_config_test()) == 0, "honest pretrain init");
+    TagWorldNerva tn;
+    tagworld_nerva_init(&e, &tn);
+    tagworld_pretrain_for_config(&e, &tn, &cfg);
+
+    expect_true(tagworld_nerva_edge_weight(&e, tn.honest.policy_edge[0][TAG_ACTION_WAIT]) == 0u,
+                "honest primitive policy edge zero after pretrain");
+    expect_true(tagworld_nerva_edge_weight(&e, tn.honest.policy_edge[4][TAG_ACTION_PUSH_BLOCK_TO_DOORWAY]) == 0u,
+                "honest dist-near push edge zero after pretrain");
+    expect_true(tagworld_nerva_edge_weight(&e, tn.edge.path_open_to_push_doorway) == 0u,
+                "legacy doorway push edge zero in honest pretrain");
+    nerva_engine_free(&e);
+}
+
+static void test_tagworld_honest_zero_start_equals_baseline(void) {
+    TagWorldConfig cfg = tagworld_tool_test_config();
+    cfg.map_id = TAGWORLD_MAP_TOOL_H;
+    cfg.honest = true;
+    cfg.mode = TAGWORLD_MODE_ACTION;
+    cfg.fast = true;
+    cfg.episodes = 300u;
+    cfg.seed = 1u;
+
+    NervaEngine e;
+    expect_true(nerva_engine_init(&e, nerva_config_test()) == 0, "honest zero-start init");
+    TagWorldMetrics metrics;
+    expect_true(tagworld_run(&e, &cfg, &metrics) == 0, "honest zero-start run");
+    double baseline = tagworld_baseline_random_escape_rate(&cfg, cfg.episodes);
+    fprintf(stderr, "MAP_H honest stage2: model_escape=%.4f random_baseline=%.4f\n",
+            metrics.escape_rate, baseline);
+    expect_true(fabs(metrics.escape_rate - baseline) < 0.001,
+                "honest zero-weight policy escape matches random baseline");
+    nerva_engine_free(&e);
+}
+
+static TagWorldConfig tagworld_honest_learn_test_config(void) {
+    TagWorldConfig cfg = tagworld_tool_test_config();
+    cfg.map_id = TAGWORLD_MAP_TOOL_H;
+    cfg.honest = true;
+    cfg.pure_feedback = true;
+    cfg.mode = TAGWORLD_MODE_ACTION;
+    cfg.fast = true;
+    cfg.online_frozen_eval = true;
+    cfg.online_learn_episodes = 200u;
+    cfg.online_eval_episodes = 50u;
+    cfg.online_explore_pct = 15u;
+    cfg.online_coverage_episodes = 0u;
+    return cfg;
+}
+
+static void test_tagworld_honest_pure_feedback_no_oracle(void) {
+    TagWorldConfig cfg = tagworld_honest_learn_test_config();
+    cfg.seed = 1u;
+
+    tagworld_debug_reset_oracle_counters();
+    NervaEngine e;
+    expect_true(nerva_engine_init(&e, nerva_config_test()) == 0, "honest pf init");
+    TagWorldFrozenResult result;
+    expect_true(tagworld_run_frozen_result(&e, &cfg, &result) == 0, "honest pf frozen run");
+    expect_true(tagworld_debug_oracle_online_train_pair_rounds() == 0u,
+                "honest pure feedback uses zero oracle train_pair rounds");
+    expect_true(result.learn.pure_feedback_credit_mutations > 0u,
+                "honest pure feedback queues outcome credit mutations");
+    nerva_engine_free(&e);
+}
+
 static void test_tagworld_map_g_not_clone_of_a(void) {
     TagWorldConfig cfg = tagworld_tool_test_config();
     TagWorld a;
@@ -1548,6 +1731,11 @@ int test_tagworld_run(void) {
     test_tagworld_pure_feedback_no_dynamics_pretrain();
     test_tagworld_pure_feedback_g_all_gate_seeds();
     test_tagworld_held_out_maps_push_then_run_wins();
+    test_tagworld_map_h_honest_stage1_gate();
+    test_tagworld_honest_no_chokepoint_symbols();
+    test_tagworld_honest_primitive_edges_zero_after_pretrain();
+    test_tagworld_honest_zero_start_equals_baseline();
+    test_tagworld_honest_pure_feedback_no_oracle();
     test_tagworld_viz_no_state_change();
     test_tagworld_replay_deterministic();
     return g_failures;

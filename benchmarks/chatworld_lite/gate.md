@@ -99,6 +99,27 @@ Kill if:
 - answer rendering uses hidden correct labels
 - runtime DeepSeek/LLM output is used to answer
 
+## Stage 2.5 - Binding Candidate Reduction
+
+Current candidate generation must enumerate multiple surface-derived memory candidates instead of
+collapsing each utterance to one preselected key/value action.
+
+Promote if:
+
+- memory traces include selected labels such as `MEM_WRITE_PAIR:k1:v3` and `MEM_READ_PAIR:k2`
+- the selected binding candidate is learned by edge support, not chosen by a deterministic winner rule
+- frozen eval remains mutation-free
+- frozen eval does not add graph nodes, graph edges, or interned names
+- fallback count remains zero
+- ablation of learned candidate/action edges drops eval behavior
+
+Kill if:
+
+- memory write/read uses a single hardcoded `token-before-is` or `last-token` candidate
+- the adapter emits semantic slot/key labels
+- eval succeeds through a default binding fallback
+- eval creates candidate graph structure after the training phase
+
 ## Claim Discipline
 
 ```text
@@ -107,6 +128,6 @@ Supported:     small dialogue policy and surface-bound memory/action-frame selec
 Not supported: ChatGPT-like open-domain conversation; free-form prose generation; semantic parsing;
                broad language understanding; runtime LLM assistance.
 Evidence:      gate metrics, unit tests, frozen eval traces, mutation counts, ablation.
-Residuals:     candidate frames and zero-weight edge skeleton are predeclared; early memory binding
-               is surface-bound and mechanical.
+Residuals:     candidate frames and zero-weight edge skeleton are predeclared; memory binding
+               candidates are still mechanically enumerated from surface positions.
 ```

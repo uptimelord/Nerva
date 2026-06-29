@@ -14,6 +14,7 @@
 #define CHATWORLD_MAX_TOKEN_LEN 31u
 #define CHATWORLD_MEMORY_CAP 32u
 #define CHATWORLD_MAX_TURNS 64u
+#define CHATWORLD_MAX_CANDIDATE_LABEL 63u
 
 typedef enum ChatWorldFrame {
     CHAT_FRAME_GREET = 0,
@@ -98,6 +99,7 @@ typedef struct ChatWorld {
 typedef struct ChatWorldDecision {
     ChatWorldAction action;
     ChatWorldFrame frame;
+    char candidate[CHATWORLD_MAX_CANDIDATE_LABEL + 1u];
     char key[CHATWORLD_MAX_TOKEN_LEN + 1u];
     char value[CHATWORLD_MAX_TOKEN_LEN + 1u];
     uint32_t score;
@@ -120,6 +122,7 @@ typedef struct ChatWorldMetrics {
     uint32_t memory_read_count;
     uint32_t trace_count;
     uint32_t decision_trace_count;
+    uint32_t binding_candidate_count;
     uint32_t response_ablation_correct;
     uint32_t response_ablation_total;
 } ChatWorldMetrics;

@@ -14,3 +14,4 @@ Required reporting fields:
 - `memory_read_count`
 - `trace_count`
 - `decision_trace_count`
+- `binding_candidate_count`

@@ -11,6 +11,7 @@ The first implementation is ChatWorld-lite:
 - surface tokens only
 - response-frame actions
 - mechanical candidate memory write/read actions
+- multiple surface-position binding candidates for memory actions
 - zero-weight policy edges at start
 - no fallback responder
 - no runtime LLM/API teacher

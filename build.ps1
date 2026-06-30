@@ -123,6 +123,7 @@ $cli = Join-Path $build "nerva_cli.exe"
 $bench = Join-Path $build "nerva_bench.exe"
 $tagworld = Join-Path $build "nerva_tagworld.exe"
 $chatworld = Join-Path $build "nerva_chatworld.exe"
+$chatworldValidator = Join-Path $build "nerva_chatworld_validate_rows.exe"
 if ($compiler.Kind -eq "gcc") {
     & $compiler.Path @CFLAGS -o $cli (Join-Path $PSScriptRoot "tools\nerva_cli.c") @libObjs
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -132,11 +133,14 @@ if ($compiler.Kind -eq "gcc") {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $compiler.Path @CFLAGS -o $chatworld (Join-Path $PSScriptRoot "tools\chatworld_cli.c") @libObjs @chatworldObjs
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $compiler.Path @CFLAGS -o $chatworldValidator (Join-Path $PSScriptRoot "tools\chatworld_validate_rows.c") @libObjs @chatworldObjs
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 } else {
     $cliSrc = Join-Path $PSScriptRoot "tools\nerva_cli.c"
     $benchSrc = Join-Path $PSScriptRoot "tools\nerva_bench.c"
     $tagworldSrcMain = Join-Path $PSScriptRoot "tools\tagworld_cli.c"
     $chatworldSrcMain = Join-Path $PSScriptRoot "tools\chatworld_cli.c"
+    $chatworldValidatorSrcMain = Join-Path $PSScriptRoot "tools\chatworld_validate_rows.c"
     $tagworldObjList = ($TagworldSrc | ForEach-Object { Join-Path $build ([System.IO.Path]::GetFileName([System.IO.Path]::ChangeExtension($_, ".obj"))) }) -join ' '
     $chatworldObjList = ($ChatworldSrc | ForEach-Object { Join-Path $build ([System.IO.Path]::GetFileName([System.IO.Path]::ChangeExtension($_, ".obj"))) }) -join ' '
     $cmd = "`"$($compiler.Path)`" >nul && cl /nologo /std:c11 /W3 /O2 /Iinclude /Itests /Itools /Iworlds/tagworld /Iworlds/chatworld /D_CRT_SECURE_NO_WARNINGS $cliSrc $(($libObjs) -join ' ') /Fe:$cli"
@@ -149,6 +153,9 @@ if ($compiler.Kind -eq "gcc") {
     cmd.exe /c $cmd
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     $cmd = "`"$($compiler.Path)`" >nul && cl /nologo /std:c11 /W3 /O2 /Iinclude /Itests /Itools /Iworlds/tagworld /Iworlds/chatworld /D_CRT_SECURE_NO_WARNINGS $chatworldSrcMain $(($libObjs) -join ' ') $chatworldObjList /Fe:$chatworld"
+    cmd.exe /c $cmd
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    $cmd = "`"$($compiler.Path)`" >nul && cl /nologo /std:c11 /W3 /O2 /Iinclude /Itests /Itools /Iworlds/tagworld /Iworlds/chatworld /D_CRT_SECURE_NO_WARNINGS $chatworldValidatorSrcMain $(($libObjs) -join ' ') $chatworldObjList /Fe:$chatworldValidator"
     cmd.exe /c $cmd
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }

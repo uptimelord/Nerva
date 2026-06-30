@@ -24,12 +24,18 @@
 #define CHAT_REL_SURFACE_TO_ACTION ((uint16_t)(NERVA_REL_CUSTOM_BASE + 44u))
 #define CHAT_REL_SURFACE_TO_KEY_TOKEN ((uint16_t)(NERVA_REL_CUSTOM_BASE + 45u))
 #define CHAT_REL_KEY_TOKEN_TO_BINDING ((uint16_t)(NERVA_REL_CUSTOM_BASE + 46u))
+#define CHAT_REL_SURFACE_TO_ACTION_GATE ((uint16_t)(NERVA_REL_CUSTOM_BASE + 47u))
+#define CHAT_REL_BINDING_TO_ACTION_GATE ((uint16_t)(NERVA_REL_CUSTOM_BASE + 48u))
+#define CHAT_REL_ACTION_GATE_TO_ACTION ((uint16_t)(NERVA_REL_CUSTOM_BASE + 49u))
+#define CHAT_REL_KEY_TO_VALUE_BINDING ((uint16_t)(NERVA_REL_CUSTOM_BASE + 50u))
 
 #define CHATWORLD_DEFAULT_TRAIN_PATH "worlds/chatworld/datasets/train.tsv"
 #define CHATWORLD_DEFAULT_DEV_PATH "worlds/chatworld/datasets/dev.tsv"
 #define CHATWORLD_DEFAULT_FROZEN_PATH "worlds/chatworld/datasets/frozen.tsv"
 #define CHATWORLD_SUPPORT_WEIGHT_Q8_8 512
-#define CHATWORLD_ACTION_THETA_Q8_8 1536
+#define CHATWORLD_ACTION_THETA_Q8_8 1024
+#define CHATWORLD_ACTION_GATE_THETA_Q8_8 1536
+#define CHATWORLD_ACTION_GATE_OUTPUT_WEIGHT_Q8_8 1024
 
 typedef struct ChatWorldSurface {
     char tokens[CHATWORLD_MAX_TOKENS][CHATWORLD_MAX_TOKEN_LEN + 1u];
@@ -49,13 +55,23 @@ typedef struct ChatWorldPath {
     ChatWorldAction action;
     uint32_t key_pos;
     uint32_t value_pos;
+    uint32_t value_token_count;
     uint32_t action_node;
+    uint32_t key_token_node;
     uint32_t key_candidate_node;
     uint32_t value_candidate_node;
     uint32_t output_node;
+    uint32_t action_gate_node;
+    uint32_t output_nodes[CHATWORLD_MAX_TOKENS];
+    uint32_t output_node_count;
     uint32_t selected_edges[CHATWORLD_MAX_SELECTED_EDGES];
     uint32_t selected_edge_count;
 } ChatWorldPath;
+
+static int chatworld_surface_parse(const char *utterance, ChatWorldSurface *surface);
+static uint32_t chatworld_value_tokenize(const char *value,
+                                         char tokens[CHATWORLD_MAX_TOKENS]
+                                                    [CHATWORLD_MAX_TOKEN_LEN + 1u]);
 
 static const char *const chatworld_forbidden_names[] = {
     "INTENT",
@@ -81,6 +97,36 @@ static void chatworld_copy_token(char *dst, const char *src) {
     dst[i] = '\0';
 }
 
+static void chatworld_copy_value(char *dst, size_t dst_size, const char *src) {
+    if (!dst || dst_size == 0u) {
+        return;
+    }
+    if (!src) {
+        dst[0] = '\0';
+        return;
+    }
+
+    size_t i = 0;
+    size_t out = 0;
+    int pending_space = 0;
+    while (src[i] != '\0' && src[i] != '\r' && src[i] != '\n') {
+        unsigned char ch = (unsigned char)src[i++];
+        if (isspace(ch)) {
+            pending_space = out > 0u;
+            continue;
+        }
+        if (pending_space && out + 1u < dst_size) {
+            dst[out++] = ' ';
+        }
+        pending_space = 0;
+        if (out + 1u >= dst_size) {
+            break;
+        }
+        dst[out++] = (char)tolower(ch);
+    }
+    dst[out] = '\0';
+}
+
 static void chatworld_copy_field(char *dst, size_t dst_size, const char *src) {
     if (!dst || dst_size == 0u) {
         return;
@@ -97,13 +143,31 @@ static void chatworld_copy_field(char *dst, size_t dst_size, const char *src) {
     dst[i] = '\0';
 }
 
+static int chatworld_contains_case_insensitive(const char *s, const char *needle) {
+    if (!s || !needle || needle[0] == '\0') {
+        return 0;
+    }
+    size_t n = strlen(needle);
+    for (size_t i = 0; s[i] != '\0'; ++i) {
+        size_t j = 0;
+        while (j < n && s[i + j] != '\0' &&
+               tolower((unsigned char)s[i + j]) == tolower((unsigned char)needle[j])) {
+            j++;
+        }
+        if (j == n) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static int chatworld_has_forbidden_name(const char *name) {
     if (!name) {
         return 0;
     }
     for (uint32_t i = 0; i < sizeof(chatworld_forbidden_names) / sizeof(chatworld_forbidden_names[0]);
          ++i) {
-        if (strstr(name, chatworld_forbidden_names[i])) {
+        if (chatworld_contains_case_insensitive(name, chatworld_forbidden_names[i])) {
             return 1;
         }
     }
@@ -157,6 +221,26 @@ static void chatworld_path_add_edge(ChatWorldPath *path, uint32_t edge_id) {
     path->selected_edges[path->selected_edge_count++] = edge_id;
 }
 
+static int chatworld_is_fixed_support_edge(const NervaEngine *e, uint32_t edge_id) {
+    if (!e || edge_id == UINT32_MAX || edge_id >= e->edge_count) {
+        return 0;
+    }
+    const NervaEdge *ed = &e->edges[edge_id];
+    if (ed->relation == CHAT_REL_SURFACE_TO_BINDING &&
+        ed->weight == CHATWORLD_SUPPORT_WEIGHT_Q8_8) {
+        return 1;
+    }
+    if (ed->relation == CHAT_REL_BINDING_TO_ACTION_GATE &&
+        ed->weight == CHATWORLD_SUPPORT_WEIGHT_Q8_8) {
+        return 1;
+    }
+    if (ed->relation == CHAT_REL_ACTION_GATE_TO_ACTION &&
+        ed->weight == CHATWORLD_ACTION_GATE_OUTPUT_WEIGHT_Q8_8) {
+        return 1;
+    }
+    return 0;
+}
+
 static void chatworld_path_add_if_exists(const NervaEngine *e, ChatWorldPath *path,
                                          uint32_t source, uint32_t target, uint16_t relation) {
     uint32_t edge_id = chatworld_find_edge_by_relation(e, source, target, relation);
@@ -193,7 +277,45 @@ static ChatWorldExpected chatworld_expected_from_string(const char *s) {
     if (strcmp(s, "MEMORY_VALUE") == 0) {
         return CHAT_EXPECT_MEMORY_VALUE;
     }
+    if (strcmp(s, "NO_SUPPORTED_RESPONSE") == 0 || strcmp(s, "NO_SUPPORTED") == 0) {
+        return CHAT_EXPECT_NO_SUPPORTED_RESPONSE;
+    }
     return CHAT_EXPECT_NONE;
+}
+
+static const char *chatworld_expected_name(ChatWorldExpected expected) {
+    switch (expected) {
+    case CHAT_EXPECT_GREET:
+        return "GREET";
+    case CHAT_EXPECT_ACK:
+        return "ACK";
+    case CHAT_EXPECT_UNKNOWN:
+        return "UNKNOWN";
+    case CHAT_EXPECT_MEMORY_VALUE:
+        return "MEMORY_VALUE";
+    case CHAT_EXPECT_NO_SUPPORTED_RESPONSE:
+        return "NO_SUPPORTED_RESPONSE";
+    default:
+        return "";
+    }
+}
+
+static int chatworld_dataset_push(ChatWorldDataset *ds, const ChatWorldTurn *turn) {
+    if (!ds || !turn) {
+        return -1;
+    }
+    if (ds->count >= ds->cap) {
+        uint32_t new_cap = ds->cap == 0u ? 64u : ds->cap * 2u;
+        ChatWorldTurn *new_turns =
+            (ChatWorldTurn *)realloc(ds->turns, (size_t)new_cap * sizeof(ChatWorldTurn));
+        if (!new_turns) {
+            return -1;
+        }
+        ds->turns = new_turns;
+        ds->cap = new_cap;
+    }
+    ds->turns[ds->count++] = *turn;
+    return 0;
 }
 
 int chatworld_load_dataset(const char *path, ChatWorldDataset *out) {
@@ -211,11 +333,6 @@ int chatworld_load_dataset(const char *path, ChatWorldDataset *out) {
         if (line[0] == '\0' || line[0] == '#' || line[0] == '\r' || line[0] == '\n') {
             continue;
         }
-        if (out->count >= CHATWORLD_MAX_TURNS) {
-            fclose(f);
-            return -1;
-        }
-
         char *fields[5] = {0};
         char *cursor = line;
         for (uint32_t i = 0; i < 5u; ++i) {
@@ -230,26 +347,497 @@ int chatworld_load_dataset(const char *path, ChatWorldDataset *out) {
             }
         }
 
-        ChatWorldTurn *t = &out->turns[out->count];
-        chatworld_copy_field(t->utterance, sizeof(t->utterance), fields[0]);
-        t->expected = chatworld_expected_from_string(fields[1]);
-        chatworld_copy_token(t->expected_key, fields[2]);
-        chatworld_copy_token(t->expected_value, fields[3]);
-        t->learn = fields[4] && strtoul(fields[4], NULL, 10) != 0u;
-        if (t->utterance[0] == '\0' || t->expected == CHAT_EXPECT_NONE) {
+        ChatWorldTurn t;
+        memset(&t, 0, sizeof(t));
+        chatworld_copy_field(t.utterance, sizeof(t.utterance), fields[0]);
+        t.expected = chatworld_expected_from_string(fields[1]);
+        chatworld_copy_token(t.expected_key, fields[2]);
+        chatworld_copy_value(t.expected_value, sizeof(t.expected_value), fields[3]);
+        t.learn = fields[4] && strtoul(fields[4], NULL, 10) != 0u;
+        if (t.utterance[0] == '\0' || t.expected == CHAT_EXPECT_NONE ||
+            chatworld_dataset_push(out, &t) != 0) {
             fclose(f);
+            chatworld_free_dataset(out);
             return -1;
         }
-        out->count++;
     }
 
     fclose(f);
     return out->count > 0u ? 0 : -1;
 }
 
+void chatworld_free_dataset(ChatWorldDataset *ds) {
+    if (!ds) {
+        return;
+    }
+    free(ds->turns);
+    memset(ds, 0, sizeof(*ds));
+}
+
+static int chatworld_parse_stage_code(const char *stage) {
+    if (!stage || stage[0] == '\0') {
+        return 0;
+    }
+    char normalized[32];
+    uint32_t out = 0;
+    for (uint32_t i = 0; stage[i] != '\0' && out + 1u < sizeof(normalized); ++i) {
+        unsigned char ch = (unsigned char)stage[i];
+        if (isalnum(ch)) {
+            normalized[out++] = (char)tolower(ch);
+        }
+    }
+    normalized[out] = '\0';
+
+    if (strcmp(normalized, "5") == 0 || strcmp(normalized, "50") == 0 ||
+        strcmp(normalized, "stage5") == 0 || strcmp(normalized, "stage50") == 0) {
+        return 50;
+    }
+    if (strcmp(normalized, "51") == 0 || strcmp(normalized, "stage51") == 0) {
+        return 51;
+    }
+    if (strcmp(normalized, "52") == 0 || strcmp(normalized, "stage52") == 0) {
+        return 52;
+    }
+    if (strcmp(normalized, "53") == 0 || strcmp(normalized, "stage53") == 0) {
+        return 53;
+    }
+    if (strcmp(normalized, "54") == 0 || strcmp(normalized, "stage54") == 0) {
+        return 54;
+    }
+    if (strcmp(normalized, "6") == 0 || strcmp(normalized, "60") == 0 ||
+        strcmp(normalized, "stage6") == 0 || strcmp(normalized, "stage60") == 0) {
+        return 60;
+    }
+    if (strcmp(normalized, "61") == 0 || strcmp(normalized, "stage61") == 0) {
+        return 61;
+    }
+    if (strcmp(normalized, "phase3") == 0) {
+        return 70;
+    }
+    if (strcmp(normalized, "phase4") == 0) {
+        return 80;
+    }
+    if (strcmp(normalized, "phase5") == 0) {
+        return 90;
+    }
+    if (strcmp(normalized, "phase6") == 0) {
+        return 100;
+    }
+    if (strcmp(normalized, "phase7") == 0 || strcmp(normalized, "phase8") == 0 ||
+        strcmp(normalized, "v14") == 0 || strcmp(normalized, "promotion") == 0) {
+        return 110;
+    }
+    return 0;
+}
+
+static int chatworld_field_has_forbidden_label(const char *field) {
+    if (!field) {
+        return 0;
+    }
+    for (uint32_t i = 0; i < sizeof(chatworld_forbidden_names) / sizeof(chatworld_forbidden_names[0]);
+         ++i) {
+        if (chatworld_contains_case_insensitive(field, chatworld_forbidden_names[i])) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int chatworld_count_value_tokens(const char *value) {
+    char tokens[CHATWORLD_MAX_TOKENS][CHATWORLD_MAX_TOKEN_LEN + 1u];
+    return (int)chatworld_value_tokenize(value, tokens);
+}
+
+static int chatworld_key_allowed_for_stage(const char *key, int stage_code) {
+    if (!key || key[0] == '\0') {
+        return 1;
+    }
+    if (strcmp(key, "name") == 0) {
+        return 1;
+    }
+    if (stage_code >= 80 &&
+        (strcmp(key, "city") == 0 || strcmp(key, "color") == 0 ||
+         strcmp(key, "pet") == 0 || strcmp(key, "kind") == 0)) {
+        return 1;
+    }
+    if (stage_code >= 70) {
+        return 1;
+    }
+    return 0;
+}
+
+static int chatworld_phrase_allowed_for_stage(const ChatWorldSurface *surface,
+                                              ChatWorldExpected expected,
+                                              const char *key, int stage_code) {
+    if (!surface) {
+        return 0;
+    }
+    if (expected == CHAT_EXPECT_GREET || expected == CHAT_EXPECT_UNKNOWN ||
+        expected == CHAT_EXPECT_NO_SUPPORTED_RESPONSE) {
+        return 1;
+    }
+    if (expected == CHAT_EXPECT_ACK && (!key || key[0] == '\0')) {
+        return 1;
+    }
+    if (surface->token_count == 0u) {
+        return 0;
+    }
+
+    if (expected == CHAT_EXPECT_ACK) {
+        if (surface->token_count >= 4u && strcmp(surface->tokens[0], "my") == 0 &&
+            strcmp(surface->tokens[1], "name") == 0 && strcmp(surface->tokens[2], "is") == 0) {
+            return 1;
+        }
+        if (stage_code >= 52 && surface->token_count >= 4u &&
+            strcmp(surface->tokens[0], "i") == 0 && strcmp(surface->tokens[1], "am") == 0 &&
+            strcmp(surface->tokens[2], "called") == 0) {
+            return 1;
+        }
+        if (stage_code >= 52 && surface->token_count >= 3u &&
+            strcmp(surface->tokens[0], "call") == 0 && strcmp(surface->tokens[1], "me") == 0) {
+            return 1;
+        }
+        if (stage_code >= 53 && surface->token_count >= 5u &&
+            strcmp(surface->tokens[0], "no") == 0 && strcmp(surface->tokens[1], "my") == 0 &&
+            strcmp(surface->tokens[2], "name") == 0 && strcmp(surface->tokens[3], "is") == 0) {
+            return 1;
+        }
+        if (stage_code >= 70 && surface->token_count >= 3u &&
+            strcmp(surface->tokens[surface->token_count - 2u], "is") == 0) {
+            return 1;
+        }
+        if (stage_code >= 90 && surface->token_count >= 4u &&
+            strcmp(surface->tokens[0], "no") == 0 &&
+            strcmp(surface->tokens[surface->token_count - 2u], "is") == 0) {
+            return 1;
+        }
+        if (stage_code >= 80 && surface->token_count >= 4u &&
+            strcmp(surface->tokens[0], "i") == 0 && strcmp(surface->tokens[1], "live") == 0 &&
+            strcmp(surface->tokens[2], "in") == 0) {
+            return 1;
+        }
+        if (stage_code >= 80 && surface->token_count >= 4u &&
+            strcmp(surface->tokens[0], "my") == 0 &&
+            (strcmp(surface->tokens[1], "color") == 0 ||
+             strcmp(surface->tokens[1], "pet") == 0 ||
+             strcmp(surface->tokens[1], "kind") == 0) &&
+            strcmp(surface->tokens[2], "is") == 0) {
+            return 1;
+        }
+        return 0;
+    }
+
+    if (expected == CHAT_EXPECT_MEMORY_VALUE) {
+        if (surface->token_count >= 4u && strcmp(surface->tokens[0], "what") == 0 &&
+            strcmp(surface->tokens[1], "is") == 0 && strcmp(surface->tokens[2], "my") == 0 &&
+            strcmp(surface->tokens[3], "name") == 0) {
+            return 1;
+        }
+        if (stage_code >= 61 && surface->token_count >= 3u &&
+            strcmp(surface->tokens[0], "who") == 0 && strcmp(surface->tokens[1], "am") == 0 &&
+            strcmp(surface->tokens[2], "i") == 0) {
+            return 1;
+        }
+        if (stage_code >= 61 && surface->token_count >= 4u &&
+            strcmp(surface->tokens[0], "what") == 0 && strcmp(surface->tokens[1], "am") == 0 &&
+            strcmp(surface->tokens[2], "i") == 0 && strcmp(surface->tokens[3], "called") == 0) {
+            return 1;
+        }
+        if (stage_code >= 70 && surface->token_count >= 3u &&
+            strcmp(surface->tokens[0], "what") == 0 && strcmp(surface->tokens[1], "is") == 0) {
+            return 1;
+        }
+        if (stage_code >= 80 && surface->token_count >= 4u &&
+            strcmp(surface->tokens[0], "where") == 0 && strcmp(surface->tokens[1], "do") == 0 &&
+            strcmp(surface->tokens[2], "i") == 0 && strcmp(surface->tokens[3], "live") == 0) {
+            return 1;
+        }
+        return 0;
+    }
+
+    return 0;
+}
+
+static int chatworld_surface_matches_supported_form(const ChatWorldSurface *surface,
+                                                    int stage_code) {
+    if (!surface || surface->token_count == 0u) {
+        return 0;
+    }
+    if (surface->token_count == 1u &&
+        (strcmp(surface->tokens[0], "hello") == 0 || strcmp(surface->tokens[0], "hi") == 0 ||
+         strcmp(surface->tokens[0], "thanks") == 0)) {
+        return 1;
+    }
+    if (surface->token_count == 2u && strcmp(surface->tokens[0], "thank") == 0 &&
+        strcmp(surface->tokens[1], "you") == 0) {
+        return 1;
+    }
+    if (surface->token_count >= 4u && strcmp(surface->tokens[0], "what") == 0 &&
+        strcmp(surface->tokens[1], "is") == 0 && strcmp(surface->tokens[2], "my") == 0 &&
+        strcmp(surface->tokens[3], "favorite") == 0) {
+        return 1;
+    }
+    if (surface->token_count >= 4u && strcmp(surface->tokens[0], "my") == 0 &&
+        strcmp(surface->tokens[1], "name") == 0 && strcmp(surface->tokens[2], "is") == 0) {
+        return 1;
+    }
+    if (stage_code >= 52 && surface->token_count >= 4u &&
+        strcmp(surface->tokens[0], "i") == 0 && strcmp(surface->tokens[1], "am") == 0 &&
+        strcmp(surface->tokens[2], "called") == 0) {
+        return 1;
+    }
+    if (stage_code >= 52 && surface->token_count >= 3u &&
+        strcmp(surface->tokens[0], "call") == 0 && strcmp(surface->tokens[1], "me") == 0) {
+        return 1;
+    }
+    if (stage_code >= 53 && surface->token_count >= 5u &&
+        strcmp(surface->tokens[0], "no") == 0 && strcmp(surface->tokens[1], "my") == 0 &&
+        strcmp(surface->tokens[2], "name") == 0 && strcmp(surface->tokens[3], "is") == 0) {
+        return 1;
+    }
+    if (surface->token_count >= 4u && strcmp(surface->tokens[0], "what") == 0 &&
+        strcmp(surface->tokens[1], "is") == 0 && strcmp(surface->tokens[2], "my") == 0 &&
+        strcmp(surface->tokens[3], "name") == 0) {
+        return 1;
+    }
+    if (stage_code >= 61 && surface->token_count >= 3u &&
+        strcmp(surface->tokens[0], "who") == 0 && strcmp(surface->tokens[1], "am") == 0 &&
+        strcmp(surface->tokens[2], "i") == 0) {
+        return 1;
+    }
+    if (stage_code >= 61 && surface->token_count >= 4u &&
+        strcmp(surface->tokens[0], "what") == 0 && strcmp(surface->tokens[1], "am") == 0 &&
+        strcmp(surface->tokens[2], "i") == 0 && strcmp(surface->tokens[3], "called") == 0) {
+        return 1;
+    }
+    if (stage_code >= 70 && surface->token_count >= 3u &&
+        strcmp(surface->tokens[0], "what") == 0 && strcmp(surface->tokens[1], "is") == 0) {
+        return 1;
+    }
+    if (stage_code >= 70 && surface->token_count >= 3u &&
+        strcmp(surface->tokens[surface->token_count - 2u], "is") == 0) {
+        return 1;
+    }
+    if (stage_code >= 90 && surface->token_count >= 4u &&
+        strcmp(surface->tokens[0], "no") == 0 &&
+        strcmp(surface->tokens[surface->token_count - 2u], "is") == 0) {
+        return 1;
+    }
+    if (stage_code >= 80 && surface->token_count >= 4u &&
+        strcmp(surface->tokens[0], "i") == 0 && strcmp(surface->tokens[1], "live") == 0 &&
+        strcmp(surface->tokens[2], "in") == 0) {
+        return 1;
+    }
+    if (stage_code >= 80 && surface->token_count >= 4u &&
+        strcmp(surface->tokens[0], "where") == 0 && strcmp(surface->tokens[1], "do") == 0 &&
+        strcmp(surface->tokens[2], "i") == 0 && strcmp(surface->tokens[3], "live") == 0) {
+        return 1;
+    }
+    if (stage_code >= 80 && surface->token_count >= 4u &&
+        strcmp(surface->tokens[0], "my") == 0 &&
+        (strcmp(surface->tokens[1], "color") == 0 ||
+         strcmp(surface->tokens[1], "pet") == 0 ||
+         strcmp(surface->tokens[1], "kind") == 0) &&
+        strcmp(surface->tokens[2], "is") == 0) {
+        return 1;
+    }
+    return 0;
+}
+
+static void chatworld_set_validation_error(ChatWorldValidationResult *out, uint32_t line_no,
+                                           const char *message) {
+    if (!out) {
+        return;
+    }
+    out->error_count++;
+    if (out->first_error_line == 0u) {
+        out->first_error_line = line_no;
+        chatworld_copy_field(out->first_error, sizeof(out->first_error), message);
+    }
+}
+
+static void chatworld_report_validation_error(FILE *err, const char *path, uint32_t line_no,
+                                              const char *message) {
+    if (err) {
+        fprintf(err, "%s:%u: %s\n", path ? path : "<input>", line_no, message);
+    }
+}
+
+int chatworld_validate_rows_file(const char *stage, const char *path, bool frozen_rows,
+                                 FILE *err, ChatWorldValidationResult *out) {
+    if (out) {
+        memset(out, 0, sizeof(*out));
+    }
+    if (!stage || !path) {
+        return -1;
+    }
+    int stage_code = chatworld_parse_stage_code(stage);
+    if (stage_code == 0) {
+        chatworld_set_validation_error(out, 0u, "unknown stage");
+        chatworld_report_validation_error(err, path, 0u, "unknown stage");
+        return -1;
+    }
+
+    FILE *f = fopen(path, "r");
+    if (!f) {
+        chatworld_set_validation_error(out, 0u, "could not open input");
+        chatworld_report_validation_error(err, path, 0u, "could not open input");
+        return -1;
+    }
+
+    char line[384];
+    uint32_t line_no = 0;
+    while (fgets(line, sizeof(line), f)) {
+        line_no++;
+        if (line[0] == '\0' || line[0] == '#' || line[0] == '\r' || line[0] == '\n') {
+            continue;
+        }
+        if (!strchr(line, '\n') && !feof(f)) {
+            chatworld_set_validation_error(out, line_no, "line too long");
+            chatworld_report_validation_error(err, path, line_no, "line too long");
+            int ch;
+            while ((ch = fgetc(f)) != '\n' && ch != EOF) {
+            }
+            continue;
+        }
+
+        char *fields[5] = {0};
+        char *cursor = line;
+        int columns = 1;
+        for (uint32_t i = 0; i < 5u; ++i) {
+            fields[i] = cursor;
+            char *tab = strchr(cursor, '\t');
+            if (tab) {
+                *tab = '\0';
+                cursor = tab + 1;
+                columns++;
+            } else {
+                if (i < 4u) {
+                    columns = (int)i + 1;
+                }
+                break;
+            }
+        }
+        if (columns != 5 || (fields[4] && strchr(fields[4], '\t'))) {
+            chatworld_set_validation_error(out, line_no, "bad column count");
+            chatworld_report_validation_error(err, path, line_no, "bad column count");
+            continue;
+        }
+
+        ChatWorldTurn t;
+        memset(&t, 0, sizeof(t));
+        chatworld_copy_field(t.utterance, sizeof(t.utterance), fields[0]);
+        t.expected = chatworld_expected_from_string(fields[1]);
+        chatworld_copy_token(t.expected_key, fields[2]);
+        chatworld_copy_value(t.expected_value, sizeof(t.expected_value), fields[3]);
+        t.learn = fields[4] && strtoul(fields[4], NULL, 10) != 0u;
+        if (out) {
+            out->row_count++;
+        }
+
+        if (t.utterance[0] == '\0') {
+            chatworld_set_validation_error(out, line_no, "empty utterance");
+            chatworld_report_validation_error(err, path, line_no, "empty utterance");
+            continue;
+        }
+        if (t.expected == CHAT_EXPECT_NONE) {
+            chatworld_set_validation_error(out, line_no, "unknown expected type");
+            chatworld_report_validation_error(err, path, line_no, "unknown expected type");
+            continue;
+        }
+        if (chatworld_field_has_forbidden_label(fields[0]) ||
+            chatworld_field_has_forbidden_label(fields[1]) ||
+            chatworld_field_has_forbidden_label(fields[2]) ||
+            chatworld_field_has_forbidden_label(fields[3])) {
+            chatworld_set_validation_error(out, line_no, "forbidden label word");
+            chatworld_report_validation_error(err, path, line_no, "forbidden label word");
+            continue;
+        }
+        if (frozen_rows && t.learn) {
+            chatworld_set_validation_error(out, line_no, "frozen row has learn=1");
+            chatworld_report_validation_error(err, path, line_no, "frozen row has learn=1");
+            continue;
+        }
+        if (t.expected == CHAT_EXPECT_ACK &&
+            ((t.expected_key[0] == '\0') != (t.expected_value[0] == '\0'))) {
+            chatworld_set_validation_error(out, line_no, "ack row has partial key/value");
+            chatworld_report_validation_error(err, path, line_no,
+                                              "ack row has partial key/value");
+            continue;
+        }
+        if (t.expected == CHAT_EXPECT_MEMORY_VALUE &&
+            (t.expected_key[0] == '\0' || t.expected_value[0] == '\0')) {
+            chatworld_set_validation_error(out, line_no, "missing key or value");
+            chatworld_report_validation_error(err, path, line_no, "missing key or value");
+            continue;
+        }
+        if ((t.expected == CHAT_EXPECT_GREET || t.expected == CHAT_EXPECT_UNKNOWN ||
+             t.expected == CHAT_EXPECT_NO_SUPPORTED_RESPONSE) &&
+            (t.expected_key[0] != '\0' || t.expected_value[0] != '\0')) {
+            chatworld_set_validation_error(out, line_no, "response row smuggles answer fields");
+            chatworld_report_validation_error(err, path, line_no,
+                                              "response row smuggles answer fields");
+            continue;
+        }
+        if (stage_code < 100 && chatworld_count_value_tokens(t.expected_value) > 1) {
+            chatworld_set_validation_error(out, line_no, "multi-token value before phase6");
+            chatworld_report_validation_error(err, path, line_no,
+                                              "multi-token value before phase6");
+            continue;
+        }
+        if (!chatworld_key_allowed_for_stage(t.expected_key, stage_code)) {
+            chatworld_set_validation_error(out, line_no, "key unsupported for stage");
+            chatworld_report_validation_error(err, path, line_no, "key unsupported for stage");
+            continue;
+        }
+        if (t.expected == CHAT_EXPECT_NO_SUPPORTED_RESPONSE) {
+            ChatWorldSurface unsupported_surface;
+            if (chatworld_surface_parse(t.utterance, &unsupported_surface) == 0 &&
+                chatworld_surface_matches_supported_form(&unsupported_surface, stage_code)) {
+                chatworld_set_validation_error(out, line_no,
+                                               "supported phrase marked unsupported");
+                chatworld_report_validation_error(err, path, line_no,
+                                                  "supported phrase marked unsupported");
+                continue;
+            }
+        } else {
+            ChatWorldSurface surface;
+            if (chatworld_surface_parse(t.utterance, &surface) != 0 ||
+                !chatworld_phrase_allowed_for_stage(&surface, t.expected, t.expected_key,
+                                                    stage_code)) {
+                char msg[128];
+                snprintf(msg, sizeof(msg), "unsupported phrase form for %s",
+                         chatworld_expected_name(t.expected));
+                chatworld_set_validation_error(out, line_no, msg);
+                chatworld_report_validation_error(err, path, line_no, msg);
+                continue;
+            }
+        }
+    }
+
+    fclose(f);
+    if (out && out->row_count == 0u) {
+        chatworld_set_validation_error(out, 0u, "no rows");
+        chatworld_report_validation_error(err, path, 0u, "no rows");
+    }
+    return (!out || out->error_count == 0u) ? 0 : -1;
+}
+
 void chatworld_reset(ChatWorld *w) {
     if (!w) {
         return;
+    }
+    memset(w, 0, sizeof(*w));
+    w->memory = w->inline_memory;
+    w->memory_cap = CHATWORLD_MEMORY_INLINE_CAP;
+}
+
+void chatworld_free(ChatWorld *w) {
+    if (!w) {
+        return;
+    }
+    if (w->memory && w->memory != w->inline_memory) {
+        free(w->memory);
     }
     memset(w, 0, sizeof(*w));
 }
@@ -324,6 +912,15 @@ int chatworld_nerva_init(NervaEngine *e, ChatWorldNerva *cw) {
             return -1;
         }
         e->nodes[cw->action_node[a]].theta_fire = CHATWORLD_ACTION_THETA_Q8_8;
+
+        char gate_name[96];
+        snprintf(gate_name, sizeof(gate_name), "ACTION_GATE:%s",
+                 chatworld_action_name((ChatWorldAction)a));
+        cw->action_gate_node[a] = chatworld_get_or_create(e, gate_name);
+        if (cw->action_gate_node[a] == UINT32_MAX) {
+            return -1;
+        }
+        e->nodes[cw->action_gate_node[a]].theta_fire = CHATWORLD_ACTION_GATE_THETA_Q8_8;
     }
 
     nerva_graph_rebuild_adjacency(e);
@@ -364,6 +961,78 @@ static int chatworld_surface_parse(const char *utterance, ChatWorldSurface *surf
         }
     }
     return 0;
+}
+
+static uint32_t chatworld_value_tokenize(const char *value,
+                                         char tokens[CHATWORLD_MAX_TOKENS]
+                                                    [CHATWORLD_MAX_TOKEN_LEN + 1u]) {
+    ChatWorldSurface surface;
+    if (!value || chatworld_surface_parse(value, &surface) != 0) {
+        return 0u;
+    }
+    for (uint32_t i = 0; i < surface.token_count; ++i) {
+        chatworld_copy_token(tokens[i], surface.tokens[i]);
+    }
+    return surface.token_count;
+}
+
+static int chatworld_find_value_start(const ChatWorldSurface *surface, const char *value,
+                                      uint32_t *token_count) {
+    if (token_count) {
+        *token_count = 0u;
+    }
+    if (!surface || !value || value[0] == '\0') {
+        return -1;
+    }
+
+    char value_tokens[CHATWORLD_MAX_TOKENS][CHATWORLD_MAX_TOKEN_LEN + 1u];
+    uint32_t count = chatworld_value_tokenize(value, value_tokens);
+    if (count == 0u || count > surface->token_count) {
+        return -1;
+    }
+
+    for (uint32_t i = 0; i + count <= surface->token_count; ++i) {
+        int matched = 1;
+        for (uint32_t j = 0; j < count; ++j) {
+            if (strcmp(surface->tokens[i + j], value_tokens[j]) != 0) {
+                matched = 0;
+                break;
+            }
+        }
+        if (matched) {
+            if (token_count) {
+                *token_count = count;
+            }
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+static void chatworld_join_surface_tokens(const ChatWorldSurface *surface, uint32_t start,
+                                          char *out, size_t out_size) {
+    if (!out || out_size == 0u) {
+        return;
+    }
+    out[0] = '\0';
+    if (!surface || start >= surface->token_count) {
+        return;
+    }
+    size_t used = 0u;
+    for (uint32_t i = start; i < surface->token_count; ++i) {
+        const char *tok = surface->tokens[i];
+        size_t len = strlen(tok);
+        size_t need = len + (used > 0u ? 1u : 0u);
+        if (used + need + 1u > out_size) {
+            break;
+        }
+        if (used > 0u) {
+            out[used++] = ' ';
+        }
+        memcpy(out + used, tok, len);
+        used += len;
+        out[used] = '\0';
+    }
 }
 
 int chatworld_tokenize(const char *utterance,
@@ -474,6 +1143,18 @@ static uint32_t chatworld_preload_key_token(NervaEngine *e, ChatWorldNerva *cw,
     return node;
 }
 
+static void chatworld_preload_output_value(NervaEngine *e, ChatWorldNerva *cw,
+                                           const char *value) {
+    if (!e || !cw || !value || value[0] == '\0') {
+        return;
+    }
+    char tokens[CHATWORLD_MAX_TOKENS][CHATWORLD_MAX_TOKEN_LEN + 1u];
+    uint32_t count = chatworld_value_tokenize(value, tokens);
+    for (uint32_t i = 0; i < count; ++i) {
+        chatworld_preload_output_token(e, cw, tokens[i]);
+    }
+}
+
 static int chatworld_preload_surface(NervaEngine *e, const ChatWorldSurface *surface) {
     if (!e || !surface) {
         return -1;
@@ -527,13 +1208,17 @@ static int chatworld_preload_edges_for_surface(NervaEngine *e, const ChatWorldNe
     }
     char name[128];
     for (uint32_t i = 0; i < surface->token_count; ++i) {
+        uint32_t feature = cw->position[i];
+        chatworld_edge_from_feature_to_all_positions(e, cw, feature);
         snprintf(name, sizeof(name), "TOKEN:%.*s", (int)CHATWORLD_MAX_TOKEN_LEN,
                  surface->tokens[i]);
-        uint32_t feature = nerva_find_node_by_name(e, name);
+        feature = nerva_find_node_by_name(e, name);
         chatworld_edge_from_feature_to_all_positions(e, cw, feature);
         for (uint32_t a = 0; a < CHAT_ACTION_COUNT; ++a) {
             chatworld_create_edge_weight(e, feature, cw->action_node[a],
                                          CHAT_REL_SURFACE_TO_ACTION, 0);
+            chatworld_create_edge_weight(e, feature, cw->action_gate_node[a],
+                                         CHAT_REL_SURFACE_TO_ACTION_GATE, 0);
         }
         snprintf(name, sizeof(name), "TOKEN_AT:%u:%.*s", i, (int)CHATWORLD_MAX_TOKEN_LEN,
                  surface->tokens[i]);
@@ -542,6 +1227,8 @@ static int chatworld_preload_edges_for_surface(NervaEngine *e, const ChatWorldNe
         for (uint32_t a = 0; a < CHAT_ACTION_COUNT; ++a) {
             chatworld_create_edge_weight(e, feature, cw->action_node[a],
                                          CHAT_REL_SURFACE_TO_ACTION, 0);
+            chatworld_create_edge_weight(e, feature, cw->action_gate_node[a],
+                                         CHAT_REL_SURFACE_TO_ACTION_GATE, 0);
         }
     }
     for (uint32_t i = 0; i + 1u < surface->token_count; ++i) {
@@ -552,6 +1239,8 @@ static int chatworld_preload_edges_for_surface(NervaEngine *e, const ChatWorldNe
         for (uint32_t a = 0; a < CHAT_ACTION_COUNT; ++a) {
             chatworld_create_edge_weight(e, feature, cw->action_node[a],
                                          CHAT_REL_SURFACE_TO_ACTION, 0);
+            chatworld_create_edge_weight(e, feature, cw->action_gate_node[a],
+                                         CHAT_REL_SURFACE_TO_ACTION_GATE, 0);
         }
     }
     for (uint32_t i = 0; i < surface->punct_count; ++i) {
@@ -561,39 +1250,11 @@ static int chatworld_preload_edges_for_surface(NervaEngine *e, const ChatWorldNe
         for (uint32_t a = 0; a < CHAT_ACTION_COUNT; ++a) {
             chatworld_create_edge_weight(e, feature, cw->action_node[a],
                                          CHAT_REL_SURFACE_TO_ACTION, 0);
+            chatworld_create_edge_weight(e, feature, cw->action_gate_node[a],
+                                         CHAT_REL_SURFACE_TO_ACTION_GATE, 0);
         }
     }
     return 0;
-}
-
-static int chatworld_is_canonical_name_read(const ChatWorldSurface *surface) {
-    return surface && surface->token_count == 4u &&
-           strcmp(surface->tokens[0], "what") == 0 &&
-           strcmp(surface->tokens[1], "is") == 0 &&
-           strcmp(surface->tokens[2], "my") == 0 &&
-           strcmp(surface->tokens[3], "name") == 0;
-}
-
-static void chatworld_preload_read_affordance(NervaEngine *e, const ChatWorldNerva *cw,
-                                              const ChatWorldSurface *surface) {
-    if (!e || !cw || !chatworld_is_canonical_name_read(surface)) {
-        return;
-    }
-    char name[128];
-    snprintf(name, sizeof(name), "TOKEN_AT:3:name");
-    uint32_t key_feature = nerva_find_node_by_name(e, name);
-    snprintf(name, sizeof(name), "TOKEN_AT:0:what");
-    uint32_t what_feature = nerva_find_node_by_name(e, name);
-    snprintf(name, sizeof(name), "PAIR:what:is");
-    uint32_t what_is_feature = nerva_find_node_by_name(e, name);
-    chatworld_create_edge_weight(e, key_feature, cw->key_candidate[3u],
-                                 CHAT_REL_SURFACE_TO_BINDING, CHATWORLD_SUPPORT_WEIGHT_Q8_8);
-    chatworld_create_edge_weight(e, what_feature, cw->action_node[CHAT_ACTION_MEM_READ],
-                                 CHAT_REL_SURFACE_TO_ACTION, CHATWORLD_SUPPORT_WEIGHT_Q8_8);
-    chatworld_create_edge_weight(e, what_is_feature, cw->action_node[CHAT_ACTION_MEM_READ],
-                                 CHAT_REL_SURFACE_TO_ACTION, CHATWORLD_SUPPORT_WEIGHT_Q8_8);
-    chatworld_create_edge_weight(e, key_feature, cw->action_node[CHAT_ACTION_MEM_READ],
-                                 CHAT_REL_SURFACE_TO_ACTION, CHATWORLD_SUPPORT_WEIGHT_Q8_8);
 }
 
 static void chatworld_preload_binding_action_edges(NervaEngine *e, const ChatWorldNerva *cw) {
@@ -605,15 +1266,27 @@ static void chatworld_preload_binding_action_edges(NervaEngine *e, const ChatWor
                                      CHAT_REL_SURFACE_TO_BINDING, CHATWORLD_SUPPORT_WEIGHT_Q8_8);
         chatworld_create_edge_weight(e, cw->value_candidate[pos], cw->bind_value,
                                      CHAT_REL_SURFACE_TO_BINDING, CHATWORLD_SUPPORT_WEIGHT_Q8_8);
-        chatworld_create_edge_weight(e, cw->bind_key, cw->action_node[CHAT_ACTION_MEM_READ],
-                                     CHAT_REL_BINDING_TO_ACTION, 0);
-        chatworld_create_edge_weight(e, cw->bind_key, cw->action_node[CHAT_ACTION_MEM_WRITE],
-                                     CHAT_REL_BINDING_TO_ACTION, 0);
-        chatworld_create_edge_weight(e, cw->bind_value, cw->action_node[CHAT_ACTION_MEM_WRITE],
-                                     CHAT_REL_BINDING_TO_ACTION, 0);
+        for (uint32_t value_pos = 0; value_pos < CHATWORLD_MAX_TOKENS; ++value_pos) {
+            chatworld_create_edge_weight(e, cw->key_candidate[pos], cw->value_candidate[value_pos],
+                                         CHAT_REL_KEY_TO_VALUE_BINDING, 0);
+        }
+        chatworld_create_edge_weight(e, cw->bind_key, cw->action_gate_node[CHAT_ACTION_MEM_READ],
+                                      CHAT_REL_BINDING_TO_ACTION_GATE,
+                                      CHATWORLD_SUPPORT_WEIGHT_Q8_8);
+        chatworld_create_edge_weight(e, cw->bind_key, cw->action_gate_node[CHAT_ACTION_MEM_WRITE],
+                                      CHAT_REL_BINDING_TO_ACTION_GATE,
+                                      CHATWORLD_SUPPORT_WEIGHT_Q8_8);
+        chatworld_create_edge_weight(e, cw->bind_value, cw->action_gate_node[CHAT_ACTION_MEM_WRITE],
+                                      CHAT_REL_BINDING_TO_ACTION_GATE,
+                                      CHATWORLD_SUPPORT_WEIGHT_Q8_8);
         chatworld_create_edge_weight(e, cw->key_candidate[pos],
                                      cw->action_node[CHAT_ACTION_RESP_UNKNOWN],
                                      CHAT_REL_BINDING_TO_ACTION, 0);
+    }
+    for (uint32_t a = 0; a < CHAT_ACTION_COUNT; ++a) {
+        chatworld_create_edge_weight(e, cw->action_gate_node[a], cw->action_node[a],
+                                     CHAT_REL_ACTION_GATE_TO_ACTION,
+                                     CHATWORLD_ACTION_GATE_OUTPUT_WEIGHT_Q8_8);
     }
 }
 
@@ -696,7 +1369,7 @@ int chatworld_preload_dataset(NervaEngine *e, ChatWorldNerva *cw, const ChatWorl
             chatworld_preload_output_token(e, cw, surface.tokens[j]);
         }
         chatworld_preload_output_token(e, cw, ds->turns[i].expected_key);
-        chatworld_preload_output_token(e, cw, ds->turns[i].expected_value);
+        chatworld_preload_output_value(e, cw, ds->turns[i].expected_value);
         chatworld_preload_key_token(e, cw, ds->turns[i].expected_key);
     }
 
@@ -709,7 +1382,6 @@ int chatworld_preload_dataset(NervaEngine *e, ChatWorldNerva *cw, const ChatWorl
         if (chatworld_preload_edges_for_surface(e, cw, &surface) != 0) {
             return -1;
         }
-        chatworld_preload_read_affordance(e, cw, &surface);
     }
     chatworld_preload_action_output_edges(e, cw);
     chatworld_preload_surface_output_edges(e, cw);
@@ -727,6 +1399,7 @@ static void chatworld_quiesce_engine(NervaEngine *e) {
     e->tick = 0;
     e->last_query_start_tick = 0;
     e->active_query_tag = 1u;
+    e->trace_count = 0;
     for (uint32_t i = 0; i < e->node_count; ++i) {
         e->nodes[i].v = e->nodes[i].v_rest;
         e->nodes[i].last_fired_tick = 0;
@@ -880,30 +1553,6 @@ static uint32_t chatworld_count_fired_outputs(const NervaEngine *e, const ChatWo
     return count;
 }
 
-static int chatworld_path_target_is_fired(const NervaEngine *e, const ChatWorldNerva *cw,
-                                          const ChatWorldPath *path) {
-    if (!e || !cw || !path) {
-        return 0;
-    }
-    if (path->kind == CHAT_PATH_MEM_WRITE) {
-        return chatworld_fire_log_contains(e, cw->action_node[CHAT_ACTION_MEM_WRITE]) &&
-               chatworld_fire_log_contains(e, cw->bind_key) &&
-               chatworld_fire_log_contains(e, cw->bind_value) &&
-               chatworld_fire_log_contains(e, path->key_candidate_node) &&
-               chatworld_fire_log_contains(e, path->value_candidate_node);
-    }
-    if (path->kind == CHAT_PATH_MEM_READ) {
-        return chatworld_fire_log_contains(e, cw->action_node[CHAT_ACTION_MEM_READ]) &&
-               chatworld_fire_log_contains(e, cw->bind_key) &&
-               chatworld_fire_log_contains(e, path->key_candidate_node);
-    }
-    if (path->action == CHAT_ACTION_RESP_UNKNOWN) {
-        return chatworld_fire_log_contains(e, path->action_node) &&
-               chatworld_fire_log_contains(e, path->output_node);
-    }
-    return chatworld_fire_log_contains(e, path->output_node);
-}
-
 static uint32_t chatworld_find_named_feature(const NervaEngine *e, const char *prefix,
                                              const char *a, const char *b, uint32_t pos) {
     if (!e || !prefix || !a) {
@@ -931,6 +1580,15 @@ static void chatworld_add_binding_feature(const NervaEngine *e, ChatWorldPath *p
     chatworld_path_add_if_exists(e, path, feature_node, target_node, CHAT_REL_SURFACE_TO_BINDING);
 }
 
+static void chatworld_add_key_value_binding(const NervaEngine *e, ChatWorldPath *path) {
+    if (!path || path->key_candidate_node == UINT32_MAX ||
+        path->value_candidate_node == UINT32_MAX) {
+        return;
+    }
+    chatworld_path_add_if_exists(e, path, path->key_candidate_node, path->value_candidate_node,
+                                 CHAT_REL_KEY_TO_VALUE_BINDING);
+}
+
 static void chatworld_add_output_feature(const NervaEngine *e, ChatWorldPath *path,
                                          uint32_t feature_node) {
     if (feature_node == UINT32_MAX || path->output_node == UINT32_MAX) {
@@ -943,6 +1601,14 @@ static void chatworld_add_output_feature(const NervaEngine *e, ChatWorldPath *pa
 static void chatworld_add_action_feature(const NervaEngine *e, ChatWorldPath *path,
                                          uint32_t feature_node) {
     if (feature_node == UINT32_MAX || path->action_node == UINT32_MAX) {
+        return;
+    }
+    if (path->kind == CHAT_PATH_MEM_WRITE || path->kind == CHAT_PATH_MEM_READ) {
+        if (path->action_gate_node == UINT32_MAX) {
+            return;
+        }
+        chatworld_path_add_if_exists(e, path, feature_node, path->action_gate_node,
+                                     CHAT_REL_SURFACE_TO_ACTION_GATE);
         return;
     }
     chatworld_path_add_if_exists(e, path, feature_node, path->action_node,
@@ -961,8 +1627,6 @@ static void chatworld_add_key_token_feature(const NervaEngine *e, const ChatWorl
     }
     chatworld_path_add_if_exists(e, path, feature_node, key_node,
                                  CHAT_REL_SURFACE_TO_KEY_TOKEN);
-    chatworld_path_add_if_exists(e, path, key_node, path->key_candidate_node,
-                                 CHAT_REL_KEY_TOKEN_TO_BINDING);
 }
 
 static void chatworld_select_response_features(const NervaEngine *e,
@@ -1038,6 +1702,161 @@ static void chatworld_select_unknown_action_features(const NervaEngine *e,
     }
 }
 
+static void chatworld_add_feature_to_memory_path(const NervaEngine *e, ChatWorldPath *path,
+                                                 uint32_t feature_node) {
+    if (!path || feature_node == UINT32_MAX) {
+        return;
+    }
+    chatworld_add_action_feature(e, path, feature_node);
+}
+
+static void chatworld_add_feature_context(const NervaEngine *e, const ChatWorldSurface *surface,
+                                          ChatWorldPath *path, uint32_t pos,
+                                          int include_token_node) {
+    if (!surface || !path || pos >= surface->token_count) {
+        return;
+    }
+    uint32_t feature =
+        chatworld_find_named_feature(e, "TOKEN_AT", surface->tokens[pos], NULL, pos);
+    chatworld_add_feature_to_memory_path(e, path, feature);
+    if (include_token_node) {
+        feature = chatworld_find_named_feature(e, "TOKEN", surface->tokens[pos], NULL, 0u);
+        chatworld_add_feature_to_memory_path(e, path, feature);
+    }
+    if (pos > 0u) {
+        feature = chatworld_find_named_feature(e, "PAIR", surface->tokens[pos - 1u],
+                                               surface->tokens[pos], 0u);
+        chatworld_add_feature_to_memory_path(e, path, feature);
+    }
+    if (pos + 1u < surface->token_count) {
+        feature = chatworld_find_named_feature(e, "PAIR", surface->tokens[pos],
+                                               surface->tokens[pos + 1u], 0u);
+        chatworld_add_feature_to_memory_path(e, path, feature);
+    }
+}
+
+static void chatworld_add_binding_from_feature(const NervaEngine *e, const ChatWorldNerva *cw,
+                                               ChatWorldPath *path, uint32_t feature_node,
+                                               const char *expected_key) {
+    if (!path || feature_node == UINT32_MAX) {
+        return;
+    }
+    if (path->key_candidate_node != UINT32_MAX && expected_key && expected_key[0] != '\0') {
+        chatworld_add_key_token_feature(e, cw, path, feature_node, expected_key);
+    }
+    if (path->key_pos < CHATWORLD_MAX_TOKENS && path->key_candidate_node != UINT32_MAX) {
+        chatworld_add_binding_feature(e, path, feature_node, path->key_candidate_node);
+    }
+}
+
+static void chatworld_select_write_features(const NervaEngine *e, const ChatWorldNerva *cw,
+                                            const ChatWorldSurface *surface,
+                                            const char *expected_key, ChatWorldPath *path) {
+    if (!surface || !path) {
+        return;
+    }
+
+    uint32_t anchor = path->value_pos;
+    if (anchor < surface->token_count && anchor > 0u) {
+        anchor--;
+    }
+    if (anchor < surface->token_count) {
+        uint32_t feature = UINT32_MAX;
+        int copula_anchor = strcmp(surface->tokens[anchor], "is") == 0 ||
+                            strcmp(surface->tokens[anchor], "are") == 0 ||
+                            strcmp(surface->tokens[anchor], "am") == 0;
+        if (copula_anchor && anchor > 0u) {
+            chatworld_add_key_value_binding(e, path);
+        } else {
+            feature = chatworld_find_named_feature(e, "TOKEN_AT", surface->tokens[anchor], NULL,
+                                                   anchor);
+            chatworld_add_binding_feature(e, path, feature, path->value_candidate_node);
+        }
+        if (!copula_anchor) {
+            chatworld_add_feature_context(e, surface, path, anchor, 0);
+            chatworld_add_binding_from_feature(e, cw, path, feature, expected_key);
+        }
+    }
+
+    for (uint32_t i = 0; i < surface->token_count; ++i) {
+        if (i + 1u < surface->token_count &&
+            (strcmp(surface->tokens[i + 1u], "is") == 0 ||
+             strcmp(surface->tokens[i + 1u], "are") == 0 ||
+             strcmp(surface->tokens[i + 1u], "am") == 0)) {
+            uint32_t feature = chatworld_find_named_feature(e, "PAIR", surface->tokens[i],
+                                                           surface->tokens[i + 1u], 0u);
+            chatworld_add_action_feature(e, path, feature);
+        }
+        if (strcmp(surface->tokens[i], "called") == 0 || strcmp(surface->tokens[i], "call") == 0) {
+            chatworld_add_feature_context(e, surface, path, i, 0);
+            uint32_t feature =
+                chatworld_find_named_feature(e, "TOKEN_AT", surface->tokens[i], NULL, i);
+            if (expected_key && expected_key[0] != '\0' &&
+                strcmp(surface->tokens[i], expected_key) == 0) {
+                chatworld_add_binding_feature(e, path, feature, path->key_candidate_node);
+            } else {
+                chatworld_add_binding_from_feature(e, cw, path, feature, expected_key);
+            }
+        }
+    }
+
+    if (path->key_pos < surface->token_count) {
+        uint32_t feature = chatworld_find_named_feature(e, "TOKEN_AT",
+                                                       surface->tokens[path->key_pos], NULL,
+                                                       path->key_pos);
+        chatworld_add_binding_feature(e, path, feature, path->key_candidate_node);
+        if (expected_key && expected_key[0] != '\0' &&
+            strcmp(surface->tokens[path->key_pos], expected_key) != 0) {
+            chatworld_add_key_token_feature(e, cw, path, feature, expected_key);
+        }
+    }
+}
+
+static void chatworld_select_read_features(const NervaEngine *e, const ChatWorldNerva *cw,
+                                           const ChatWorldSurface *surface,
+                                           const char *expected_key, ChatWorldPath *path) {
+    if (!surface || !path) {
+        return;
+    }
+
+    for (uint32_t i = 0; i < surface->token_count; ++i) {
+        const char *tok = surface->tokens[i];
+        if (strcmp(tok, "what") == 0) {
+            uint32_t feature = chatworld_find_named_feature(e, "TOKEN_AT", tok, NULL, i);
+            chatworld_add_action_feature(e, path, feature);
+        }
+        if (strcmp(tok, "who") == 0 || strcmp(tok, "where") == 0) {
+            uint32_t feature = chatworld_find_named_feature(e, "TOKEN_AT", tok, NULL, i);
+            chatworld_add_action_feature(e, path, feature);
+            feature = chatworld_find_named_feature(e, "TOKEN", tok, NULL, 0u);
+            chatworld_add_action_feature(e, path, feature);
+            chatworld_add_binding_from_feature(e, cw, path, feature, expected_key);
+            if (i + 1u < surface->token_count) {
+                feature = chatworld_find_named_feature(e, "PAIR", tok, surface->tokens[i + 1u],
+                                                       0u);
+                chatworld_add_action_feature(e, path, feature);
+            }
+        }
+        if (expected_key && expected_key[0] != '\0' && strcmp(tok, expected_key) == 0) {
+            uint32_t feature = chatworld_find_named_feature(e, "TOKEN_AT", tok, NULL, i);
+            chatworld_add_binding_feature(e, path, feature, path->key_candidate_node);
+            if (i >= 2u) {
+                chatworld_add_action_feature(e, path, feature);
+            }
+            chatworld_add_key_token_feature(e, cw, path, feature, expected_key);
+        }
+        if (strcmp(tok, "called") == 0 || strcmp(tok, "live") == 0 ||
+            strcmp(tok, "color") == 0 || strcmp(tok, "pet") == 0 ||
+            strcmp(tok, "where") == 0 || strcmp(tok, "who") == 0) {
+            uint32_t feature = chatworld_find_named_feature(e, "TOKEN_AT", tok, NULL, i);
+            if (i >= 2u || strcmp(tok, "where") == 0 || strcmp(tok, "who") == 0) {
+                chatworld_add_action_feature(e, path, feature);
+            }
+            chatworld_add_binding_from_feature(e, cw, path, feature, expected_key);
+        }
+    }
+}
+
 static void chatworld_prepare_path(NervaEngine *e, const ChatWorldNerva *cw,
                                    const ChatWorldSurface *surface, const char *expected_key,
                                    ChatWorldPath *path) {
@@ -1048,11 +1867,16 @@ static void chatworld_prepare_path(NervaEngine *e, const ChatWorldNerva *cw,
     if (path->key_pos < CHATWORLD_MAX_TOKENS) {
         path->key_candidate_node = cw->key_candidate[path->key_pos];
     }
+    path->key_token_node =
+        expected_key && expected_key[0] != '\0' ? chatworld_key_node_for_token(cw, expected_key)
+                                                : UINT32_MAX;
     if (path->value_pos < CHATWORLD_MAX_TOKENS) {
         path->value_candidate_node = cw->value_candidate[path->value_pos];
     }
     path->action_node =
         path->action < CHAT_ACTION_COUNT ? cw->action_node[path->action] : UINT32_MAX;
+    path->action_gate_node =
+        path->action < CHAT_ACTION_COUNT ? cw->action_gate_node[path->action] : UINT32_MAX;
 
     if (path->kind == CHAT_PATH_RESPONSE) {
         chatworld_select_response_features(e, surface, path);
@@ -1060,73 +1884,9 @@ static void chatworld_prepare_path(NervaEngine *e, const ChatWorldNerva *cw,
             chatworld_select_unknown_action_features(e, surface, path);
         }
     } else if (path->kind == CHAT_PATH_MEM_WRITE) {
-        for (uint32_t i = 0; i < surface->token_count; ++i) {
-            if (i + 1u < surface->token_count && strcmp(surface->tokens[i], "name") == 0 &&
-                strcmp(surface->tokens[i + 1u], "is") == 0) {
-                chatworld_add_action_feature(
-                    e, path,
-                    chatworld_find_named_feature(e, "PAIR", surface->tokens[i],
-                                                 surface->tokens[i + 1u], 0u));
-            }
-        }
-        if (path->value_pos < surface->token_count && path->value_pos > 0u) {
-            chatworld_add_action_feature(
-                e, path,
-                chatworld_find_named_feature(e, "TOKEN_AT",
-                                             surface->tokens[path->value_pos - 1u], NULL,
-                                             path->value_pos - 1u));
-            if (path->value_pos > 1u) {
-                chatworld_add_action_feature(
-                    e, path,
-                    chatworld_find_named_feature(e, "PAIR",
-                                                 surface->tokens[path->value_pos - 2u],
-                                                 surface->tokens[path->value_pos - 1u], 0u));
-            }
-            chatworld_add_binding_feature(
-                e, path,
-                chatworld_find_named_feature(e, "TOKEN_AT",
-                                             surface->tokens[path->value_pos - 1u], NULL,
-                                             path->value_pos - 1u),
-                path->value_candidate_node);
-        }
-        if (path->key_pos >= surface->token_count && expected_key && expected_key[0] != '\0' &&
-            path->value_pos < surface->token_count && path->value_pos > 0u) {
-            chatworld_add_key_token_feature(
-                e, cw, path,
-                chatworld_find_named_feature(e, "TOKEN_AT",
-                                             surface->tokens[path->value_pos - 1u], NULL,
-                                             path->value_pos - 1u),
-                expected_key);
-            if (path->value_pos > 1u) {
-                chatworld_add_key_token_feature(
-                    e, cw, path,
-                    chatworld_find_named_feature(e, "PAIR",
-                                                 surface->tokens[path->value_pos - 2u],
-                                                 surface->tokens[path->value_pos - 1u], 0u),
-                    expected_key);
-            }
-        }
-        if (path->key_pos < surface->token_count) {
-            chatworld_add_binding_feature(
-                e, path,
-                chatworld_find_named_feature(e, "TOKEN_AT", surface->tokens[path->key_pos], NULL,
-                                             path->key_pos),
-                path->key_candidate_node);
-        }
+        chatworld_select_write_features(e, cw, surface, expected_key, path);
     } else if (path->kind == CHAT_PATH_MEM_READ) {
-        if (path->key_pos < surface->token_count) {
-            chatworld_add_action_feature(
-                e, path,
-                chatworld_find_named_feature(e, "TOKEN_AT", surface->tokens[path->key_pos], NULL,
-                                             path->key_pos));
-        }
-        if (path->key_pos < surface->token_count) {
-            chatworld_add_binding_feature(
-                e, path,
-                chatworld_find_named_feature(e, "TOKEN_AT", surface->tokens[path->key_pos], NULL,
-                                             path->key_pos),
-                path->key_candidate_node);
-        }
+        chatworld_select_read_features(e, cw, surface, expected_key, path);
     }
 
     if (path->key_candidate_node != UINT32_MAX) {
@@ -1142,15 +1902,100 @@ static void chatworld_prepare_path(NervaEngine *e, const ChatWorldNerva *cw,
                                      CHAT_REL_SURFACE_TO_BINDING);
     }
     if (path->kind == CHAT_PATH_MEM_WRITE) {
-        chatworld_path_add_if_exists(e, path, cw->bind_value, path->action_node,
-                                     CHAT_REL_BINDING_TO_ACTION);
+        chatworld_path_add_if_exists(e, path, cw->bind_key, path->action_gate_node,
+                                     CHAT_REL_BINDING_TO_ACTION_GATE);
+        chatworld_path_add_if_exists(e, path, cw->bind_value, path->action_gate_node,
+                                     CHAT_REL_BINDING_TO_ACTION_GATE);
     } else if (path->kind == CHAT_PATH_MEM_READ) {
-        chatworld_path_add_if_exists(e, path, cw->bind_key, path->action_node,
-                                     CHAT_REL_BINDING_TO_ACTION);
+        chatworld_path_add_if_exists(e, path, cw->bind_key, path->action_gate_node,
+                                     CHAT_REL_BINDING_TO_ACTION_GATE);
+    }
+    if ((path->kind == CHAT_PATH_MEM_WRITE || path->kind == CHAT_PATH_MEM_READ) &&
+        path->action_gate_node != UINT32_MAX && path->action_node != UINT32_MAX) {
+        chatworld_path_add_if_exists(e, path, path->action_gate_node, path->action_node,
+                                     CHAT_REL_ACTION_GATE_TO_ACTION);
     }
     if (path->kind == CHAT_PATH_MEM_WRITE && path->output_node != UINT32_MAX) {
         chatworld_path_add_if_exists(e, path, path->action_node, path->output_node,
                                      CHAT_REL_ACTION_TO_OUTPUT);
+    }
+    if (path->output_node_count == 0u && path->output_node != UINT32_MAX) {
+        path->output_nodes[path->output_node_count++] = path->output_node;
+    }
+}
+
+static int chatworld_find_first_token(const ChatWorldSurface *surface, const char *token) {
+    if (!surface || !token || token[0] == '\0') {
+        return -1;
+    }
+    for (uint32_t i = 0; i < surface->token_count; ++i) {
+        if (strcmp(surface->tokens[i], token) == 0) {
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+static uint32_t chatworld_default_key_pos_for_write(const ChatWorldSurface *surface,
+                                                    const char *expected_key,
+                                                    uint32_t value_pos) {
+    int pos = chatworld_find_first_token(surface, expected_key);
+    if (pos >= 0) {
+        return (uint32_t)pos;
+    }
+    if (!surface || !expected_key || expected_key[0] == '\0') {
+        return UINT32_MAX;
+    }
+    if (strcmp(expected_key, "name") == 0) {
+        return CHATWORLD_MAX_TOKENS - 1u;
+    }
+    if (strcmp(expected_key, "city") == 0 || strcmp(expected_key, "live") == 0) {
+        return CHATWORLD_MAX_TOKENS - 1u;
+    }
+    if (value_pos > 0u) {
+        return value_pos - 1u;
+    }
+    return UINT32_MAX;
+}
+
+static uint32_t chatworld_default_key_pos_for_read(const ChatWorldSurface *surface,
+                                                   const char *expected_key) {
+    int pos = chatworld_find_first_token(surface, expected_key);
+    if (pos >= 0) {
+        return (uint32_t)pos;
+    }
+    if (!surface || !expected_key || expected_key[0] == '\0') {
+        return UINT32_MAX;
+    }
+    if (strcmp(expected_key, "name") == 0 && surface->token_count >= 2u) {
+        return surface->token_count - 1u;
+    }
+    if ((strcmp(expected_key, "city") == 0 || strcmp(expected_key, "live") == 0) &&
+        surface->token_count > 0u) {
+        return CHATWORLD_MAX_TOKENS - 1u;
+    }
+    if (surface->token_count >= 3u && strcmp(surface->tokens[0], "what") == 0 &&
+        strcmp(surface->tokens[1], "is") == 0) {
+        return 2u;
+    }
+    return surface->token_count > 0u ? surface->token_count - 1u : UINT32_MAX;
+}
+
+static void chatworld_fill_output_nodes_for_value(const ChatWorldNerva *cw, ChatWorldPath *path,
+                                                  const char *value) {
+    if (!cw || !path || !value || value[0] == '\0') {
+        return;
+    }
+    char tokens[CHATWORLD_MAX_TOKENS][CHATWORLD_MAX_TOKEN_LEN + 1u];
+    uint32_t count = chatworld_value_tokenize(value, tokens);
+    for (uint32_t i = 0; i < count && i < CHATWORLD_MAX_TOKENS; ++i) {
+        uint32_t node = chatworld_output_node_for_token(cw, tokens[i]);
+        if (node != UINT32_MAX) {
+            path->output_nodes[path->output_node_count++] = node;
+            if (path->output_node == UINT32_MAX) {
+                path->output_node = node;
+            }
+        }
     }
 }
 
@@ -1161,9 +2006,12 @@ static void chatworld_make_expected_path(NervaEngine *e, const ChatWorldNerva *c
     memset(path, 0, sizeof(*path));
     path->key_pos = UINT32_MAX;
     path->value_pos = UINT32_MAX;
+    path->key_token_node = UINT32_MAX;
     path->key_candidate_node = UINT32_MAX;
     path->value_candidate_node = UINT32_MAX;
     path->output_node = UINT32_MAX;
+    path->output_node_count = 0u;
+    path->value_token_count = 0u;
 
     switch (turn->expected) {
     case CHAT_EXPECT_GREET:
@@ -1176,23 +2024,13 @@ static void chatworld_make_expected_path(NervaEngine *e, const ChatWorldNerva *c
         if (turn->expected_key[0] != '\0' && turn->expected_value[0] != '\0') {
             path->kind = CHAT_PATH_MEM_WRITE;
             path->action = CHAT_ACTION_MEM_WRITE;
-            for (uint32_t i = 1; i < surface->token_count; ++i) {
-                if (strcmp(surface->tokens[i], "is") == 0 &&
-                    strcmp(surface->tokens[i - 1u], turn->expected_key) == 0) {
-                    path->key_pos = i - 1u;
-                    break;
-                }
+            int value_start =
+                chatworld_find_value_start(surface, turn->expected_value, &path->value_token_count);
+            if (value_start >= 0) {
+                path->value_pos = (uint32_t)value_start;
             }
-            for (uint32_t i = 0; i < surface->token_count; ++i) {
-                if (strcmp(surface->tokens[i], turn->expected_key) == 0 &&
-                    path->key_pos == UINT32_MAX) {
-                    path->key_pos = i;
-                }
-                if (strcmp(surface->tokens[i], turn->expected_value) == 0 &&
-                    path->value_pos == UINT32_MAX) {
-                    path->value_pos = i;
-                }
-            }
+            path->key_pos =
+                chatworld_default_key_pos_for_write(surface, turn->expected_key, path->value_pos);
             path->output_node = chatworld_output_node_for_token(cw, "ok");
         } else {
             path->kind = CHAT_PATH_RESPONSE;
@@ -1210,12 +2048,12 @@ static void chatworld_make_expected_path(NervaEngine *e, const ChatWorldNerva *c
     case CHAT_EXPECT_MEMORY_VALUE:
         path->kind = CHAT_PATH_MEM_READ;
         path->action = CHAT_ACTION_MEM_READ;
-        for (uint32_t i = 0; i < surface->token_count; ++i) {
-            if (strcmp(surface->tokens[i], turn->expected_key) == 0 && path->key_pos == UINT32_MAX) {
-                path->key_pos = i;
-            }
-        }
-        path->output_node = chatworld_output_node_for_token(cw, turn->expected_value);
+        path->key_pos = chatworld_default_key_pos_for_read(surface, turn->expected_key);
+        chatworld_fill_output_nodes_for_value(cw, path, turn->expected_value);
+        break;
+    case CHAT_EXPECT_NO_SUPPORTED_RESPONSE:
+        path->kind = CHAT_PATH_RESPONSE;
+        path->action = CHAT_ACTION_COUNT;
         break;
     default:
         break;
@@ -1247,6 +2085,11 @@ static void chatworld_force_path_fire(NervaEngine *e, ChatWorldNerva *cw, const 
         chatworld_emit_node(e, path->value_candidate_node);
         chatworld_tick_quiet(e, 2u);
     }
+    if ((path->kind == CHAT_PATH_MEM_WRITE || path->kind == CHAT_PATH_MEM_READ) &&
+        path->action_gate_node != UINT32_MAX) {
+        chatworld_emit_node(e, path->action_gate_node);
+        chatworld_tick_quiet(e, 2u);
+    }
     if (path->action_node != UINT32_MAX) {
         chatworld_emit_node(e, path->action_node);
         chatworld_tick_quiet(e, 2u);
@@ -1254,6 +2097,12 @@ static void chatworld_force_path_fire(NervaEngine *e, ChatWorldNerva *cw, const 
     if (path->kind != CHAT_PATH_MEM_READ && path->output_node != UINT32_MAX) {
         chatworld_emit_node(e, path->output_node);
         chatworld_tick_quiet(e, 2u);
+    }
+    if (path->kind == CHAT_PATH_MEM_READ) {
+        for (uint32_t i = 0; i < path->output_node_count; ++i) {
+            chatworld_emit_node(e, path->output_nodes[i]);
+            chatworld_tick_quiet(e, 2u);
+        }
     }
 }
 
@@ -1265,6 +2114,9 @@ static void chatworld_queue_path_feedback(NervaEngine *e, const ChatWorldPath *p
     for (uint32_t i = 0; i < path->selected_edge_count; ++i) {
         uint32_t edge_id = path->selected_edges[i];
         if (edge_id == UINT32_MAX || edge_id >= e->edge_count) {
+            continue;
+        }
+        if (chatworld_is_fixed_support_edge(e, edge_id)) {
             continue;
         }
         if (positive) {
@@ -1291,19 +2143,49 @@ static int chatworld_memory_find(const ChatWorld *w, const char *key) {
     return -1;
 }
 
+static int chatworld_memory_reserve(ChatWorld *w, uint32_t needed) {
+    if (!w) {
+        return -1;
+    }
+    if (!w->memory) {
+        chatworld_reset(w);
+    }
+    if (needed <= w->memory_cap) {
+        return 0;
+    }
+    uint32_t new_cap = w->memory_cap == 0u ? CHATWORLD_MEMORY_INLINE_CAP : w->memory_cap * 2u;
+    while (new_cap < needed) {
+        new_cap *= 2u;
+    }
+    ChatWorldMemoryPair *new_memory =
+        (ChatWorldMemoryPair *)calloc(new_cap, sizeof(ChatWorldMemoryPair));
+    if (!new_memory) {
+        return -1;
+    }
+    if (w->memory && w->memory_count > 0u) {
+        memcpy(new_memory, w->memory, (size_t)w->memory_count * sizeof(ChatWorldMemoryPair));
+    }
+    if (w->memory && w->memory != w->inline_memory) {
+        free(w->memory);
+    }
+    w->memory = new_memory;
+    w->memory_cap = new_cap;
+    return 0;
+}
+
 static void chatworld_memory_write(ChatWorld *w, const char *key, const char *value) {
     if (!w || !key || !value || key[0] == '\0' || value[0] == '\0') {
         return;
     }
     int idx = chatworld_memory_find(w, key);
     if (idx < 0) {
-        if (w->memory_count >= CHATWORLD_MEMORY_CAP) {
+        if (chatworld_memory_reserve(w, w->memory_count + 1u) != 0) {
             return;
         }
         idx = (int)w->memory_count++;
     }
     chatworld_copy_token(w->memory[idx].key, key);
-    chatworld_copy_token(w->memory[idx].value, value);
+    chatworld_copy_value(w->memory[idx].value, sizeof(w->memory[idx].value), value);
     w->memory[idx].strength++;
 }
 
@@ -1312,7 +2194,7 @@ static int chatworld_memory_read(const ChatWorld *w, const char *key, char *valu
     if (idx < 0) {
         return 0;
     }
-    chatworld_copy_token(value, w->memory[idx].value);
+    chatworld_copy_value(value, CHATWORLD_MAX_VALUE_LEN + 1u, w->memory[idx].value);
     return 1;
 }
 
@@ -1335,7 +2217,11 @@ static void chatworld_collect_used_edges_for_fired_path(const NervaEngine *e, Ch
         if (rel != CHAT_REL_SURFACE_TO_BINDING && rel != CHAT_REL_BINDING_TO_ACTION &&
             rel != CHAT_REL_ACTION_TO_OUTPUT && rel != CHAT_REL_SURFACE_TO_OUTPUT &&
             rel != CHAT_REL_SURFACE_TO_ACTION && rel != CHAT_REL_SURFACE_TO_KEY_TOKEN &&
-            rel != CHAT_REL_KEY_TOKEN_TO_BINDING) {
+            rel != CHAT_REL_KEY_TOKEN_TO_BINDING &&
+            rel != CHAT_REL_SURFACE_TO_ACTION_GATE &&
+            rel != CHAT_REL_BINDING_TO_ACTION_GATE &&
+            rel != CHAT_REL_ACTION_GATE_TO_ACTION &&
+            rel != CHAT_REL_KEY_TO_VALUE_BINDING) {
             continue;
         }
         if (d->selected_edge_count < CHATWORLD_MAX_SELECTED_EDGES) {
@@ -1351,6 +2237,146 @@ static void chatworld_collect_used_edges_for_fired_path(const NervaEngine *e, Ch
             }
         }
     }
+}
+
+static void chatworld_emit_memory_outputs(NervaEngine *e, ChatWorldNerva *cw,
+                                          const char *remembered,
+                                          ChatWorldDecision *d) {
+    if (!e || !cw || !remembered || !d) {
+        return;
+    }
+    char tokens[CHATWORLD_MAX_TOKENS][CHATWORLD_MAX_TOKEN_LEN + 1u];
+    uint32_t count = chatworld_value_tokenize(remembered, tokens);
+    if (count == 0u) {
+        d->no_supported_response = true;
+        d->frame = CHAT_FRAME_NO_SUPPORTED_RESPONSE;
+        return;
+    }
+
+    char rendered[CHATWORLD_MAX_RENDERED];
+    rendered[0] = '\0';
+    size_t used = 0u;
+    for (uint32_t i = 0; i < count; ++i) {
+        uint32_t output_node = chatworld_output_node_for_token(cw, tokens[i]);
+        if (output_node == UINT32_MAX) {
+            d->no_supported_response = true;
+            d->frame = CHAT_FRAME_NO_SUPPORTED_RESPONSE;
+            return;
+        }
+        chatworld_emit_node(e, output_node);
+        chatworld_tick_quiet(e, 2u);
+        size_t len = strlen(tokens[i]);
+        size_t need = len + (used > 0u ? 1u : 0u);
+        if (used + need + 1u >= sizeof(rendered)) {
+            d->no_supported_response = true;
+            d->frame = CHAT_FRAME_NO_SUPPORTED_RESPONSE;
+            return;
+        }
+        if (used > 0u) {
+            rendered[used++] = ' ';
+        }
+        memcpy(rendered + used, tokens[i], len);
+        used += len;
+        rendered[used] = '\0';
+    }
+
+    chatworld_copy_value(d->value, sizeof(d->value), remembered);
+    chatworld_copy_field(d->rendered, sizeof(d->rendered), rendered);
+    d->output_fired = true;
+    d->fired_output_count = count;
+    d->value_token_count = count;
+    d->frame = CHAT_FRAME_ANSWER_MEMORY;
+}
+
+static int chatworld_exact_fired_binding(const NervaEngine *e, const ChatWorldNerva *cw,
+                                         uint32_t *key_pos, uint32_t *value_pos,
+                                         uint32_t *key_node) {
+    uint32_t found_key_pos = UINT32_MAX;
+    uint32_t found_value_pos = UINT32_MAX;
+    uint32_t found_key_node = UINT32_MAX;
+    uint32_t key_count = 0u;
+    uint32_t value_count = 0u;
+    uint32_t key_node_count = 0u;
+
+    if (!e || !cw) {
+        return -1;
+    }
+
+    uint32_t limit = e->trace_count;
+    if (limit > e->cfg.trace_decay_scan_limit) {
+        limit = e->cfg.trace_decay_scan_limit;
+    }
+    for (uint32_t age = limit; age > 0u; --age) {
+        NervaTrace *t = nerva_trace_recent((NervaEngine *)e, age - 1u);
+        if (!t || !(t->flags & NERVA_TRACE_USED_PATH) || t->edge_id == NERVA_INVALID_ID ||
+            t->edge_id >= e->edge_count) {
+            continue;
+        }
+        const NervaEdge *ed = &e->edges[t->edge_id];
+        if (ed->relation == CHAT_REL_SURFACE_TO_BINDING && ed->target == cw->bind_key) {
+            for (uint32_t pos = 0; pos < CHATWORLD_MAX_TOKENS; ++pos) {
+                if (ed->source == cw->key_candidate[pos]) {
+                    if (found_key_pos != pos) {
+                        found_key_pos = pos;
+                        key_count++;
+                    }
+                    break;
+                }
+            }
+        }
+        if (value_pos && ed->relation == CHAT_REL_SURFACE_TO_BINDING &&
+            ed->target == cw->bind_value) {
+            for (uint32_t pos = 0; pos < CHATWORLD_MAX_TOKENS; ++pos) {
+                if (ed->source == cw->value_candidate[pos]) {
+                    if (found_value_pos != pos) {
+                        found_value_pos = pos;
+                        value_count++;
+                    }
+                    break;
+                }
+            }
+        }
+        if (ed->relation == CHAT_REL_SURFACE_TO_KEY_TOKEN) {
+            for (uint32_t idx = 0; idx < cw->key_count; ++idx) {
+                if (ed->target == cw->key_node[idx]) {
+                    if (found_key_node != idx) {
+                        found_key_node = idx;
+                        key_node_count++;
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    if (key_count > 1u || key_node_count > 1u || value_count > 1u) {
+        return 1;
+    }
+    if (key_count == 0u && key_node_count == 0u) {
+        return -1;
+    }
+    if (value_pos && value_count == 0u) {
+        return -1;
+    }
+    if (key_pos) {
+        *key_pos = found_key_pos;
+    }
+    if (value_pos) {
+        *value_pos = found_value_pos;
+    }
+    if (key_node) {
+        *key_node = found_key_node;
+    }
+    return 0;
+}
+
+static void chatworld_mark_ambiguous(ChatWorldDecision *d) {
+    if (!d) {
+        return;
+    }
+    d->ambiguous_response = true;
+    d->no_supported_response = false;
+    d->frame = CHAT_FRAME_CONTRADICTION_OR_AMBIGUOUS;
 }
 
 static void chatworld_fill_decision_from_fires(NervaEngine *e, ChatWorldNerva *cw, ChatWorld *w,
@@ -1388,20 +2414,31 @@ static void chatworld_fill_decision_from_fires(NervaEngine *e, ChatWorldNerva *c
 
     if (d->mem_write_fired) {
         uint32_t fired_key_node = UINT32_MAX;
-        for (uint32_t i = 0; i < cw->key_count; ++i) {
-            if (chatworld_fire_log_contains(e, cw->key_node[i])) {
-                fired_key_node = i;
-                break;
-            }
+        int binding_rc = chatworld_exact_fired_binding(e, cw, &d->key_pos, &d->value_pos,
+                                                       &fired_key_node);
+        if (binding_rc > 0) {
+            chatworld_mark_ambiguous(d);
+            return;
+        }
+        if (binding_rc < 0) {
+            d->no_supported_response = true;
+            d->frame = CHAT_FRAME_NO_SUPPORTED_RESPONSE;
+            return;
         }
         if ((d->key_pos < surface->token_count || fired_key_node != UINT32_MAX) &&
             d->value_pos < surface->token_count) {
-            if (d->key_pos < surface->token_count) {
+            if (fired_key_node != UINT32_MAX) {
+                chatworld_copy_token(d->key, cw->key_token[fired_key_node]);
+            } else if (d->key_pos < surface->token_count &&
+                       chatworld_key_node_for_token(cw, surface->tokens[d->key_pos]) !=
+                           UINT32_MAX) {
                 chatworld_copy_token(d->key, surface->tokens[d->key_pos]);
             } else {
-                chatworld_copy_token(d->key, cw->key_token[fired_key_node]);
+                d->no_supported_response = true;
+                d->frame = CHAT_FRAME_NO_SUPPORTED_RESPONSE;
+                return;
             }
-            chatworld_copy_token(d->value, surface->tokens[d->value_pos]);
+            chatworld_join_surface_tokens(surface, d->value_pos, d->value, sizeof(d->value));
             chatworld_memory_write(w, d->key, d->value);
             d->frame = CHAT_FRAME_ACK;
         } else {
@@ -1409,23 +2446,33 @@ static void chatworld_fill_decision_from_fires(NervaEngine *e, ChatWorldNerva *c
             d->frame = CHAT_FRAME_NO_SUPPORTED_RESPONSE;
         }
     } else if (d->mem_read_fired) {
-        if (d->key_pos < surface->token_count) {
-            chatworld_copy_token(d->key, surface->tokens[d->key_pos]);
-            char remembered[CHATWORLD_MAX_TOKEN_LEN + 1u];
+        uint32_t fired_key_node = UINT32_MAX;
+        int binding_rc = chatworld_exact_fired_binding(e, cw, &d->key_pos, NULL,
+                                                       &fired_key_node);
+        if (binding_rc > 0) {
+            chatworld_mark_ambiguous(d);
+            return;
+        }
+        if (binding_rc < 0) {
+            d->no_supported_response = true;
+            d->frame = CHAT_FRAME_NO_SUPPORTED_RESPONSE;
+            return;
+        }
+        if (d->key_pos < surface->token_count || fired_key_node != UINT32_MAX) {
+            if (fired_key_node != UINT32_MAX) {
+                chatworld_copy_token(d->key, cw->key_token[fired_key_node]);
+            } else if (d->key_pos < surface->token_count &&
+                       chatworld_key_node_for_token(cw, surface->tokens[d->key_pos]) !=
+                           UINT32_MAX) {
+                chatworld_copy_token(d->key, surface->tokens[d->key_pos]);
+            } else {
+                d->no_supported_response = true;
+                d->frame = CHAT_FRAME_NO_SUPPORTED_RESPONSE;
+                return;
+            }
+            char remembered[CHATWORLD_MAX_VALUE_LEN + 1u];
             if (chatworld_memory_read(w, d->key, remembered)) {
-                uint32_t output_node = chatworld_output_node_for_token(cw, remembered);
-                if (output_node != UINT32_MAX) {
-                    chatworld_emit_node(e, output_node);
-                    chatworld_tick_quiet(e, 2u);
-                    chatworld_copy_token(d->value, remembered);
-                    chatworld_copy_field(d->rendered, sizeof(d->rendered), remembered);
-                    d->output_fired = true;
-                    d->fired_output_count = 1u;
-                    d->frame = CHAT_FRAME_ANSWER_MEMORY;
-                } else {
-                    d->no_supported_response = true;
-                    d->frame = CHAT_FRAME_NO_SUPPORTED_RESPONSE;
-                }
+                chatworld_emit_memory_outputs(e, cw, remembered, d);
             } else {
                 d->no_supported_response = true;
                 d->frame = CHAT_FRAME_NO_SUPPORTED_RESPONSE;
@@ -1450,7 +2497,13 @@ static ChatWorldDecision chatworld_step_internal(NervaEngine *e, ChatWorldNerva 
                                                  const ChatWorldTurn *turn, int allow_explore);
 
 static int chatworld_response_is_correct(const ChatWorldDecision *d, const ChatWorldTurn *turn) {
-    if (!d || !turn || d->no_supported_response || d->ambiguous_response) {
+    if (!d || !turn) {
+        return 0;
+    }
+    if (turn->expected == CHAT_EXPECT_NO_SUPPORTED_RESPONSE) {
+        return d->no_supported_response && !d->ambiguous_response;
+    }
+    if (d->no_supported_response || d->ambiguous_response) {
         return 0;
     }
     switch (turn->expected) {
@@ -1469,6 +2522,8 @@ static int chatworld_response_is_correct(const ChatWorldDecision *d, const ChatW
                turn->expected_key[0] != '\0' && strcmp(d->key, turn->expected_key) == 0 &&
                turn->expected_value[0] != '\0' &&
                strcmp(d->value, turn->expected_value) == 0;
+    case CHAT_EXPECT_NO_SUPPORTED_RESPONSE:
+        return d->no_supported_response && !d->ambiguous_response;
     default:
         return 0;
     }
@@ -1524,23 +2579,18 @@ static ChatWorldDecision chatworld_step_internal(NervaEngine *e, ChatWorldNerva 
         return d;
     }
 
-    ChatWorldPath expected_path;
-    chatworld_make_expected_path(e, cw, turn, &surface, &expected_path);
-
     if (allow_explore && turn->learn) {
-        if (!chatworld_path_target_is_fired(e, cw, &expected_path)) {
-            chatworld_force_path_fire(e, cw, &expected_path);
-        }
+        ChatWorldPath expected_path;
+        chatworld_make_expected_path(e, cw, turn, &surface, &expected_path);
+        chatworld_force_path_fire(e, cw, &expected_path);
         chatworld_queue_path_feedback(e, &expected_path, 1);
-    }
-
-    chatworld_fill_decision_from_fires(e, cw, w, &surface, &d);
-
-    if (allow_explore && turn->learn) {
+        chatworld_fill_decision_from_fires(e, cw, w, &surface, &d);
         d.selected_edge_count = 0;
         for (uint32_t i = 0; i < expected_path.selected_edge_count; ++i) {
             d.selected_edges[d.selected_edge_count++] = expected_path.selected_edges[i];
         }
+    } else {
+        chatworld_fill_decision_from_fires(e, cw, w, &surface, &d);
     }
     return d;
 }
@@ -1563,12 +2613,6 @@ static void chatworld_train_turn(NervaEngine *e, ChatWorldNerva *cw, ChatWorld *
     m->train_total++;
     if (correct) {
         m->train_correct++;
-    }
-    if (d.no_supported_response) {
-        m->no_supported_response_count++;
-    }
-    if (d.ambiguous_response) {
-        m->fallback_count++;
     }
     if (d.mem_write_fired) {
         m->memory_write_count++;
@@ -1629,9 +2673,12 @@ static void chatworld_zero_learned_edges(NervaEngine *e) {
             ed->relation == CHAT_REL_SURFACE_TO_OUTPUT ||
             ed->relation == CHAT_REL_SURFACE_TO_ACTION ||
             ed->relation == CHAT_REL_SURFACE_TO_KEY_TOKEN ||
-            ed->relation == CHAT_REL_KEY_TOKEN_TO_BINDING) {
-            if (ed->weight > 0 && !(ed->relation == CHAT_REL_SURFACE_TO_BINDING &&
-                                    ed->weight == CHATWORLD_SUPPORT_WEIGHT_Q8_8)) {
+            ed->relation == CHAT_REL_KEY_TOKEN_TO_BINDING ||
+            ed->relation == CHAT_REL_SURFACE_TO_ACTION_GATE ||
+            ed->relation == CHAT_REL_BINDING_TO_ACTION_GATE ||
+            ed->relation == CHAT_REL_ACTION_GATE_TO_ACTION ||
+            ed->relation == CHAT_REL_KEY_TO_VALUE_BINDING) {
+            if (ed->weight > 0 && !chatworld_is_fixed_support_edge(e, i)) {
                 ed->weight = 0;
             }
         }
@@ -1643,6 +2690,7 @@ int chatworld_run(NervaEngine *e, const ChatWorldConfig *cfg, ChatWorldResult *o
         return -1;
     }
     memset(out, 0, sizeof(*out));
+    int rc = -1;
 
     ChatWorldNerva cw;
     ChatWorld w;
@@ -1653,27 +2701,27 @@ int chatworld_run(NervaEngine *e, const ChatWorldConfig *cfg, ChatWorldResult *o
     chatworld_reset(&w);
 
     if (cfg->train && chatworld_load_dataset(cfg->train_path, &train_ds) != 0) {
-        return -1;
+        goto cleanup;
     }
     if (cfg->eval && chatworld_load_dataset(cfg->frozen_path, &frozen_ds) != 0) {
-        return -1;
+        goto cleanup;
     }
 
     if (chatworld_nerva_init(e, &cw) != 0) {
-        return -1;
+        goto cleanup;
     }
     if (cfg->train && chatworld_preload_dataset(e, &cw, &train_ds) != 0) {
-        return -1;
+        goto cleanup;
     }
     if (cfg->eval && chatworld_preload_dataset(e, &cw, &frozen_ds) != 0) {
-        return -1;
+        goto cleanup;
     }
 
     FILE *trace_out = NULL;
     if (cfg->trace_path) {
         trace_out = fopen(cfg->trace_path, "w");
         if (!trace_out) {
-            return -1;
+            goto cleanup;
         }
         fprintf(trace_out, "chatworld_trace_v1_4=1\n");
         fprintf(trace_out, "train_path=%s\n", cfg->train_path ? cfg->train_path : "");
@@ -1715,7 +2763,13 @@ int chatworld_run(NervaEngine *e, const ChatWorldConfig *cfg, ChatWorldResult *o
     if (trace_out) {
         fclose(trace_out);
     }
-    return 0;
+    rc = 0;
+
+cleanup:
+    chatworld_free_dataset(&train_ds);
+    chatworld_free_dataset(&frozen_ds);
+    chatworld_free(&w);
+    return rc;
 }
 
 void chatworld_print_metrics(const ChatWorldMetrics *m, FILE *out) {

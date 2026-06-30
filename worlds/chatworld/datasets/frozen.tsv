@@ -2,7 +2,7 @@
 hello there	GREET			0
 thank you kindly	ACK			0
 what is my favorite color	UNKNOWN			0
-my name is Mira	ACK	name	mira	1
+my name is Mira	ACK	name	mira	0
 what is my name	MEMORY_VALUE	name	mira	0
-my name is Turing	ACK	name	turing	1
+my name is Turing	ACK	name	turing	0
 what is my name	MEMORY_VALUE	name	turing	0

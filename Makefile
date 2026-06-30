@@ -63,17 +63,19 @@ CLI_BIN = $(BUILD_DIR)/nerva_cli.exe
 BENCH_BIN = $(BUILD_DIR)/nerva_bench.exe
 TAGWORLD_BIN = $(BUILD_DIR)/nerva_tagworld.exe
 CHATWORLD_BIN = $(BUILD_DIR)/nerva_chatworld.exe
+CHATWORLD_VALIDATOR_BIN = $(BUILD_DIR)/nerva_chatworld_validate_rows.exe
 else
 TEST_BIN = $(BUILD_DIR)/test_runner
 CLI_BIN = $(BUILD_DIR)/nerva_cli
 BENCH_BIN = $(BUILD_DIR)/nerva_bench
 TAGWORLD_BIN = $(BUILD_DIR)/nerva_tagworld
 CHATWORLD_BIN = $(BUILD_DIR)/nerva_chatworld
+CHATWORLD_VALIDATOR_BIN = $(BUILD_DIR)/nerva_chatworld_validate_rows
 endif
 
-.PHONY: all test cli bench tagworld chatworld clean bootstrap-toolchain
+.PHONY: all test cli bench tagworld chatworld chatworld-validator clean bootstrap-toolchain
 
-all: test cli bench tagworld chatworld
+all: test cli bench tagworld chatworld chatworld-validator
 
 bootstrap-toolchain:
 	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/bootstrap-toolchain.ps1
@@ -88,6 +90,8 @@ bench: $(BENCH_BIN)
 tagworld: $(TAGWORLD_BIN)
 
 chatworld: $(CHATWORLD_BIN)
+
+chatworld-validator: $(CHATWORLD_VALIDATOR_BIN)
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
@@ -128,6 +132,9 @@ $(TAGWORLD_BIN): $(LIB_OBJS) $(TAGWORLD_OBJS) $(TOOLS_DIR)/tagworld_cli.c
 
 $(CHATWORLD_BIN): $(LIB_OBJS) $(CHATWORLD_OBJS) $(TOOLS_DIR)/chatworld_cli.c
 	$(CC) $(CFLAGS) $(TOOLS_DIR)/chatworld_cli.c $(LIB_OBJS) $(CHATWORLD_OBJS) -o $@ $(LDFLAGS)
+
+$(CHATWORLD_VALIDATOR_BIN): $(LIB_OBJS) $(CHATWORLD_OBJS) $(TOOLS_DIR)/chatworld_validate_rows.c
+	$(CC) $(CFLAGS) $(TOOLS_DIR)/chatworld_validate_rows.c $(LIB_OBJS) $(CHATWORLD_OBJS) -o $@ $(LDFLAGS)
 
 clean:
 	rm -rf $(BUILD_DIR)

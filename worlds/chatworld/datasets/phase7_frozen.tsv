@@ -1,0 +1,15 @@
+# utterance	expected	key	value	learn
+hello there	GREET			0
+thank you kindly	ACK			0
+what is my favorite color	UNKNOWN			0
+I am called Mira	ACK	name	mira	0
+who am I	MEMORY_VALUE	name	mira	0
+call me Turing	ACK	name	turing	0
+what am I called	MEMORY_VALUE	name	turing	0
+I live in Tokyo	ACK	city	tokyo	0
+where do I live	MEMORY_VALUE	city	tokyo	0
+my color is green	ACK	color	green	0
+what is my color	MEMORY_VALUE	color	green	0
+my pet is nova	ACK	pet	nova	0
+what is my pet	MEMORY_VALUE	pet	nova	0
+open the pod bay door	NO_SUPPORTED_RESPONSE			0

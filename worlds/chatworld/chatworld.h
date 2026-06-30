@@ -12,11 +12,11 @@
 
 #define CHATWORLD_MAX_TOKENS 12u
 #define CHATWORLD_MAX_TOKEN_LEN 31u
-#define CHATWORLD_MEMORY_CAP 32u
-#define CHATWORLD_MAX_TURNS 64u
-#define CHATWORLD_MAX_SELECTED_EDGES 48u
+#define CHATWORLD_MAX_VALUE_LEN 127u
+#define CHATWORLD_MEMORY_INLINE_CAP 32u
+#define CHATWORLD_MAX_SELECTED_EDGES 96u
 #define CHATWORLD_MAX_RENDERED 128u
-#define CHATWORLD_MAX_VOCAB 128u
+#define CHATWORLD_MAX_VOCAB 4096u
 
 typedef enum ChatWorldFrame {
     CHAT_FRAME_NO_SUPPORTED_RESPONSE = 0,
@@ -40,7 +40,8 @@ typedef enum ChatWorldExpected {
     CHAT_EXPECT_GREET,
     CHAT_EXPECT_ACK,
     CHAT_EXPECT_UNKNOWN,
-    CHAT_EXPECT_MEMORY_VALUE
+    CHAT_EXPECT_MEMORY_VALUE,
+    CHAT_EXPECT_NO_SUPPORTED_RESPONSE
 } ChatWorldExpected;
 
 typedef struct ChatWorldConfig {
@@ -61,13 +62,14 @@ typedef struct ChatWorldTurn {
     char utterance[128];
     ChatWorldExpected expected;
     char expected_key[CHATWORLD_MAX_TOKEN_LEN + 1u];
-    char expected_value[CHATWORLD_MAX_TOKEN_LEN + 1u];
+    char expected_value[CHATWORLD_MAX_VALUE_LEN + 1u];
     bool learn;
 } ChatWorldTurn;
 
 typedef struct ChatWorldDataset {
-    ChatWorldTurn turns[CHATWORLD_MAX_TURNS];
+    ChatWorldTurn *turns;
     uint32_t count;
+    uint32_t cap;
 } ChatWorldDataset;
 
 typedef struct ChatWorldNerva {
@@ -81,6 +83,7 @@ typedef struct ChatWorldNerva {
     uint32_t key_candidate[CHATWORLD_MAX_TOKENS];
     uint32_t value_candidate[CHATWORLD_MAX_TOKENS];
     uint32_t action_node[CHAT_ACTION_COUNT];
+    uint32_t action_gate_node[CHAT_ACTION_COUNT];
     uint32_t token_node[CHATWORLD_MAX_TOKENS];
     uint32_t token_at_node[CHATWORLD_MAX_TOKENS];
     uint32_t pair_node[CHATWORLD_MAX_TOKENS];
@@ -98,12 +101,14 @@ typedef struct ChatWorldNerva {
 
 typedef struct ChatWorldMemoryPair {
     char key[CHATWORLD_MAX_TOKEN_LEN + 1u];
-    char value[CHATWORLD_MAX_TOKEN_LEN + 1u];
+    char value[CHATWORLD_MAX_VALUE_LEN + 1u];
     uint32_t strength;
 } ChatWorldMemoryPair;
 
 typedef struct ChatWorld {
-    ChatWorldMemoryPair memory[CHATWORLD_MEMORY_CAP];
+    ChatWorldMemoryPair inline_memory[CHATWORLD_MEMORY_INLINE_CAP];
+    ChatWorldMemoryPair *memory;
+    uint32_t memory_cap;
     uint32_t memory_count;
 } ChatWorld;
 
@@ -111,10 +116,11 @@ typedef struct ChatWorldDecision {
     ChatWorldAction action;
     ChatWorldFrame frame;
     char key[CHATWORLD_MAX_TOKEN_LEN + 1u];
-    char value[CHATWORLD_MAX_TOKEN_LEN + 1u];
+    char value[CHATWORLD_MAX_VALUE_LEN + 1u];
     char rendered[CHATWORLD_MAX_RENDERED];
     uint32_t key_pos;
     uint32_t value_pos;
+    uint32_t value_token_count;
     uint32_t fired_output_count;
     uint32_t fired_action_count;
     uint32_t selected_edge_count;
@@ -150,11 +156,22 @@ typedef struct ChatWorldResult {
     ChatWorldMetrics metrics;
 } ChatWorldResult;
 
+typedef struct ChatWorldValidationResult {
+    uint32_t row_count;
+    uint32_t error_count;
+    uint32_t first_error_line;
+    char first_error[192];
+} ChatWorldValidationResult;
+
 void chatworld_config_defaults(ChatWorldConfig *cfg);
 int chatworld_load_dataset(const char *path, ChatWorldDataset *out);
+void chatworld_free_dataset(ChatWorldDataset *ds);
+int chatworld_validate_rows_file(const char *stage, const char *path, bool frozen_rows,
+                                 FILE *err, ChatWorldValidationResult *out);
 int chatworld_nerva_init(NervaEngine *e, ChatWorldNerva *cw);
 int chatworld_preload_dataset(NervaEngine *e, ChatWorldNerva *cw, const ChatWorldDataset *ds);
 void chatworld_reset(ChatWorld *w);
+void chatworld_free(ChatWorld *w);
 int chatworld_tokenize(const char *utterance,
                        char tokens[CHATWORLD_MAX_TOKENS][CHATWORLD_MAX_TOKEN_LEN + 1u],
                        uint32_t *count);
